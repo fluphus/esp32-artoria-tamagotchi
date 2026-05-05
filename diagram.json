@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "author": "esp32test",
+  "editor": "wokwi",
+  "parts": [
+    {
+      "type": "board-esp32-s3-devkitc-1",
+      "id": "esp",
+      "top": 0,
+      "left": 0,
+      "attrs": {
+        "flashSize": "16"
+      }
+    }
+  ],
+  "connections": [],
+  "dependencies": {}
+}
