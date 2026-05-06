@@ -143,8 +143,9 @@ struct PetState {
 // 存档头
 struct SaveHeader {
     uint8_t version;
-    uint8_t data_size;
+    uint16_t data_size;
     uint16_t checksum;
+    uint32_t sequence;      // 单调递增序号, 用于判断新旧
 };
 
 #endif // GAME_STATE_H

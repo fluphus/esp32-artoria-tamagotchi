@@ -8,10 +8,16 @@
 #include <stddef.h>
 
 // ============================================
-// NVS 存档管理器
-// 自动存档 + 关键事件存档
-// 支持存档版本检查和损坏恢复
+// NVS 双槽存档管理器
+// - 每 AUTO_SAVE_INTERVAL_SEC 秒自动存档
+// - 两个存档槽轮替写入, 新存档覆写最旧的槽
+// - 读取时按新到旧顺序尝试, 优先读最新, 新档坏则读老档
 // ============================================
+
+// 自动存档间隔 (秒), 可直接修改此值自定义
+#define AUTO_SAVE_INTERVAL_SEC  300     // 默认5分钟
+
+#define SAVE_SLOT_COUNT         2
 
 enum SaveResult : uint8_t {
     SAVE_OK = 0,
@@ -26,23 +32,20 @@ enum SaveResult : uint8_t {
 
 class SaveManager {
 public:
-    // 初始化 NVS
+    // 初始化 NVS, 扫描两个槽确定当前状态
     SaveResult init();
 
-    // 存档
+    // 存档 (写入最旧的槽)
     SaveResult save(const PetState& pet);
 
-    // 读档
+    // 读档 (按新到旧顺序尝试)
     SaveResult load(PetState& pet);
 
-    // 是否存在存档
+    // 是否存在至少一个有效存档
     bool hasSave();
 
-    // 删除存档 (销毁时用)
+    // 删除所有存档 (销毁时用)
     SaveResult erase();
-
-    // 获取上次存档时间
-    uint32_t getLastSaveTime() { return _lastSaveTime; }
 
     // 检查是否需要自动存档
     bool shouldAutoSave(uint32_t currentTime);
@@ -53,6 +56,20 @@ public:
 private:
     bool _initialized = false;
     uint32_t _lastSaveTime = 0;
+    uint32_t _nextSequence = 1;     // 下一个写入的序号
+
+    // 每个槽的 NVS key
+    static const char* slotHdrKey(uint8_t slot);
+    static const char* slotDataKey(uint8_t slot);
+
+    // 读取单个槽
+    SaveResult loadSlot(uint8_t slot, PetState& pet);
+
+    // 读取槽头 (不读数据, 仅用于判断新旧)
+    bool readSlotHeader(uint8_t slot, SaveHeader& hdr);
+
+    // 确定写入目标槽 (最旧的那个)
+    uint8_t getOldestSlot();
 
     // 简单校验和
     uint16_t calcChecksum(const uint8_t* data, size_t len);

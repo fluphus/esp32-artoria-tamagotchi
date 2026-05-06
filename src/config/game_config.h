@@ -57,11 +57,8 @@
 #define RHONGOMYNIAD_SAFE_DROP      80
 
 // --- 存档 ---
-#define SAVE_INTERVAL_SEC           300
 #define SAVE_NVS_NAMESPACE          "fate_tama"
-#define SAVE_NVS_KEY_PET            "pet_data"
-#define SAVE_NVS_KEY_VERSION        "version"
-#define SAVE_DATA_VERSION           4       // 版本号升级 (poke cooldown重构)
+#define SAVE_DATA_VERSION           5       // 版本号升级 (双槽存档)
 
 // --- 销毁 ---
 #define DESTROY_COMBO_HOLD_MS       3000
