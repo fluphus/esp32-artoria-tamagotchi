@@ -70,8 +70,6 @@ struct DailyFeedState {
     uint8_t healthy_outside_window;     // 窗口外 健康投喂次数
     uint8_t junk_outside_window;        // 窗口外 垃圾投喂次数
 
-    bool poke_used;
-
     void reset(uint8_t newDay) {
         date_day = newDay;
         feed_count = 0;
@@ -80,7 +78,6 @@ struct DailyFeedState {
         junk_in_window = 0;
         healthy_outside_window = 0;
         junk_outside_window = 0;
-        poke_used = false;
     }
 };
 
@@ -96,6 +93,7 @@ struct PetState {
     int16_t seriousness;
     uint16_t idle_minute_remainder;     // 严肃值增长计数器余数
     uint32_t idle_paused_until;         // 严肃值暂停增长截止时间戳, 0=未暂停
+    uint32_t last_poke_effect_time;     // 上次poke生效(扣减严肃值)的时间戳, 0=从未生效
 
     uint32_t rhongo_timer_start;
     bool is_rhongomyniad;
@@ -123,6 +121,7 @@ struct PetState {
         seriousness = 0;
         idle_minute_remainder = 0;
         idle_paused_until = 0;
+        last_poke_effect_time = 0;
 
         rhongo_timer_start = 0;
         is_rhongomyniad = false;

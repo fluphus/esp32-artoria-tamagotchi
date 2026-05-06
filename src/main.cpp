@@ -38,7 +38,15 @@ void printStatus() {
     else
         Serial.println(" (adult)");
     Serial.printf("  Fed today:  %d / %d\n", pet.daily_feed.feed_count, DAILY_FEED_LIMIT);
-    Serial.printf("  Poke today: %s\n", pet.daily_feed.poke_used ? "used" : "available");
+    if (pet.last_poke_effect_time == 0) {
+        Serial.println("  Poke:       available");
+    } else {
+        uint32_t elapsed = now - pet.last_poke_effect_time;
+        if (elapsed >= POKE_COOLDOWN_SEC)
+            Serial.println("  Poke:       available");
+        else
+            Serial.printf("  Poke:       cooldown %lus left\n", POKE_COOLDOWN_SEC - elapsed);
+    }
     if (pet.idle_paused_until > now)
         Serial.printf("  Idle pause: %lus left\n", pet.idle_paused_until - now);
     if (pet.mapo_tofu_count > 0)
@@ -192,8 +200,9 @@ void doPoke() {
     if (valueChanged)
         Serial.printf("[Poke] SR: %d->%d | %s\n", sR.seriousness_before, sR.seriousness_after, TIER_NAMES[sR.tier_after]);
     else
-        Serial.println("[Poke] Already poked today! (animation only)");
-    Serial.println("[Poke] Idle growth paused for 30 min.");
+        Serial.printf("[Poke] Cooldown active (%ds remaining, animation only)\n",
+                      POKE_COOLDOWN_SEC - (now - pet.last_poke_effect_time));
+    Serial.printf("[Poke] Idle growth paused for %d min.\n", POKE_IDLE_PAUSE_SEC / 60);
     if (sR.tier_changed) Serial.printf("[Poke] Tier: %s -> %s\n", TIER_NAMES[sR.tier_before], TIER_NAMES[sR.tier_after]);
     if (eR.event == EVO_FORM_CHANGED) Serial.printf("[Poke] Form: %s -> %s\n", FORM_NAMES[eR.form_before], FORM_NAMES[eR.form_after]);
 }

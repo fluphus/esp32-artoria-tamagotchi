@@ -47,6 +47,8 @@
 #define SERIOUSNESS_IDLE_PER_TICK      1    // 每次增长1点
 #define SERIOUSNESS_INTERACT_DELTA  15
 
+#define POKE_SERIOUSNESS_DELTA      15      // 每次poke减少的严肃值
+#define POKE_COOLDOWN_SEC           1800    // poke减少严肃值的冷却时间(秒), 30分钟
 #define POKE_IDLE_PAUSE_SEC         1800    // 戳一戳暂停严肃值增长30分钟
 
 // --- 狮子王 ---
@@ -59,7 +61,7 @@
 #define SAVE_NVS_NAMESPACE          "fate_tama"
 #define SAVE_NVS_KEY_PET            "pet_data"
 #define SAVE_NVS_KEY_VERSION        "version"
-#define SAVE_DATA_VERSION           3       // 版本号升级
+#define SAVE_DATA_VERSION           4       // 版本号升级 (poke cooldown重构)
 
 // --- 销毁 ---
 #define DESTROY_COMBO_HOLD_MS       3000

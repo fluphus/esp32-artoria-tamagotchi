@@ -175,23 +175,28 @@ InteractResult SeriousnessSystem::onInteract(PetState& pet, InteractType type, u
     pet.last_interact_time = currentTime;
 
     bool applyDelta = false;
+    int16_t delta = 0;
 
     if (type == INTERACT_FEED) {
         // 投喂始终扣减严肃值
         applyDelta = true;
+        delta = SERIOUSNESS_INTERACT_DELTA;
     } else if (type == INTERACT_POKE) {
-        // 每次 poke 都暂停严肃值增长30分钟 (无论是否扣减生效)
+        // 每次 poke 都暂停严肃值增长 (无论是否扣减生效)
         pet.idle_paused_until = currentTime + POKE_IDLE_PAUSE_SEC;
 
-        // 每日首次 poke 扣减严肃值 (lily和成体统一)
-        if (!pet.daily_feed.poke_used) {
+        // 冷却时间内不重复扣减严肃值, 冷却结束后可再次生效
+        bool cooldownReady = (pet.last_poke_effect_time == 0) ||
+                             (currentTime - pet.last_poke_effect_time >= POKE_COOLDOWN_SEC);
+        if (cooldownReady) {
             applyDelta = true;
-            pet.daily_feed.poke_used = true;
+            delta = POKE_SERIOUSNESS_DELTA;
+            pet.last_poke_effect_time = currentTime;
         }
     }
 
     if (applyDelta) {
-        pet.seriousness = clamp(pet.seriousness - SERIOUSNESS_INTERACT_DELTA);
+        pet.seriousness = clamp(pet.seriousness - delta);
     }
 
     updateRhongoTimer(pet, currentTime);
