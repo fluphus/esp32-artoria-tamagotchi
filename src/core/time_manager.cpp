@@ -30,8 +30,11 @@ void TimeManager::init() {
     _simulated_epoch = timeInfoToEpoch(2025, 1, 1, 8, 0, 0);
     _sim_start_millis = millis();
     _advance_offset = 0;
-    _last_minute = 255;
-    _last_day = 255;
+
+    // 初始化为当前值, 防止首次 loop 误触发 checkNewMinute/checkNewDay
+    TimeInfo t = getTimeInfo();
+    _last_minute = t.minute;
+    _last_day = t.day;
 
     Serial.println("[Time] TimeManager initialized (simulated mode)");
 
