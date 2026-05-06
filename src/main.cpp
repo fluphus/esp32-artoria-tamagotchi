@@ -288,7 +288,7 @@ void processCommand(const char* cmd) {
     if (strcmp(cmd, "fl") == 0) { printFoodList(); return; }
     if (strcmp(cmd, "f") == 0) { doFeedDraw(); return; }
     if (strcmp(cmd, "p") == 0) { doPoke(); return; }
-    if (strcmp(cmd, "d") == 0) { doDayEnd(); timeManager.advanceDays(1); return; }
+    if (strcmp(cmd, "d") == 0) { doDayEnd(); timeManager.advanceDays(1); timeManager.checkNewDay(); return; }
 
     if (strcmp(cmd, "save") == 0) {
         saveManager.save(pet);
