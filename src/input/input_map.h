@@ -11,9 +11,9 @@
 //  GPIO 引脚定义 (ESP32-S3) - 3键布局
 // ============================================================================
 
-#define PIN_BTN_L           GPIO_NUM_4      // 左键
-#define PIN_BTN_M           GPIO_NUM_5      // 中键
-#define PIN_BTN_R           GPIO_NUM_6      // 右键
+#define PIN_BTN_L           4               // 左键 (GPIO4)
+#define PIN_BTN_M           5               // 中键 (GPIO5)
+#define PIN_BTN_R           6               // 右键 (GPIO6)
 
 // ============================================================================
 //  按键硬件参数
@@ -23,7 +23,7 @@
 #define BTN_LONG_PRESS_MS       800         // 长按判定阈值 (ms)
 #define BTN_REPEAT_DELAY_MS     500         // 连按首次延迟 (ms)
 #define BTN_REPEAT_INTERVAL_MS  150         // 连按重复间隔 (ms)
-#define BTN_DESTROY_HOLD_MS     3000        // 销毁确认长按 (对应 DESTROY_COMBO_HOLD_MS)
+#define BTN_DESTROY_HOLD_MS     5000        // 三键同时长按5秒触发销毁确认
 
 #define BTN_ACTIVE_LOW          1           // 1=低电平有效(内部上拉), 0=高电平有效
 #define BTN_COUNT               3           // 总按键数量
