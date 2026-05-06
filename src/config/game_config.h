@@ -47,6 +47,8 @@
 #define SERIOUSNESS_IDLE_PER_TICK      1    // 每次增长1点
 #define SERIOUSNESS_INTERACT_DELTA  15
 
+#define POKE_IDLE_PAUSE_SEC         1800    // 戳一戳暂停严肃值增长30分钟
+
 // --- 狮子王 ---
 #define RHONGOMYNIAD_THRESHOLD      100
 #define RHONGOMYNIAD_SUSTAIN_SEC    172800

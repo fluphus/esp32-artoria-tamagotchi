@@ -82,7 +82,7 @@ IdleTickResult SeriousnessSystem::onIdleTick(PetState& pet, uint32_t currentTime
     result.seriousness_before = pet.seriousness;
     result.tier_before = getTier(pet.seriousness);
 
-    if (pet.is_rhongomyniad) {
+    if (pet.is_rhongomyniad || pet.is_black_rhongomyniad) {
         result.seriousness_after = pet.seriousness;
         result.tier_after = result.tier_before;
         result.tier_changed = false;
@@ -90,11 +90,17 @@ IdleTickResult SeriousnessSystem::onIdleTick(PetState& pet, uint32_t currentTime
         return result;
     }
 
-    pet.idle_minute_remainder++;
-    if (pet.idle_minute_remainder >= SERIOUSNESS_IDLE_INTERVAL_MIN) {
-        pet.seriousness = clamp(pet.seriousness + SERIOUSNESS_IDLE_PER_TICK);
-        pet.idle_minute_remainder = 0;
+    // 检查是否在暂停期内
+    bool paused = (pet.idle_paused_until > 0 && currentTime < pet.idle_paused_until);
+
+    if (!paused) {
+        pet.idle_minute_remainder++;
+        if (pet.idle_minute_remainder >= SERIOUSNESS_IDLE_INTERVAL_MIN) {
+            pet.seriousness = clamp(pet.seriousness + SERIOUSNESS_IDLE_PER_TICK);
+            pet.idle_minute_remainder = 0;
+        }
     }
+
     updateRhongoTimer(pet, currentTime);
 
     result.seriousness_after = pet.seriousness;
@@ -112,7 +118,7 @@ IdleTickResult SeriousnessSystem::onIdleBatch(PetState& pet, uint32_t minutes, u
     result.seriousness_before = pet.seriousness;
     result.tier_before = getTier(pet.seriousness);
 
-    if (pet.is_rhongomyniad) {
+    if (pet.is_rhongomyniad || pet.is_black_rhongomyniad) {
         result.seriousness_after = pet.seriousness;
         result.tier_after = result.tier_before;
         result.tier_changed = false;
@@ -122,15 +128,21 @@ IdleTickResult SeriousnessSystem::onIdleBatch(PetState& pet, uint32_t minutes, u
 
     uint32_t simTime = currentTime - (minutes * 60);
     for (uint32_t i = 0; i < minutes; i++) {
-        if (pet.is_rhongomyniad) break;
-
-        pet.idle_minute_remainder++;
-        if (pet.idle_minute_remainder >= SERIOUSNESS_IDLE_INTERVAL_MIN) {
-            pet.seriousness = clamp(pet.seriousness + SERIOUSNESS_IDLE_PER_TICK);
-            pet.idle_minute_remainder = 0;
-        }
+        if (pet.is_rhongomyniad || pet.is_black_rhongomyniad) break;
 
         simTime += 60;
+
+        // 检查该分钟是否在暂停期内
+        bool paused = (pet.idle_paused_until > 0 && simTime < pet.idle_paused_until);
+
+        if (!paused) {
+            pet.idle_minute_remainder++;
+            if (pet.idle_minute_remainder >= SERIOUSNESS_IDLE_INTERVAL_MIN) {
+                pet.seriousness = clamp(pet.seriousness + SERIOUSNESS_IDLE_PER_TICK);
+                pet.idle_minute_remainder = 0;
+            }
+        }
+
         updateRhongoTimer(pet, simTime);
     }
 
@@ -151,7 +163,7 @@ InteractResult SeriousnessSystem::onInteract(PetState& pet, InteractType type, u
     result.seriousness_before = pet.seriousness;
     result.tier_before = getTier(pet.seriousness);
 
-    if (pet.is_rhongomyniad) {
+    if (pet.is_rhongomyniad || pet.is_black_rhongomyniad) {
         result.seriousness_after = pet.seriousness;
         result.tier_after = result.tier_before;
         result.tier_changed = false;
@@ -168,16 +180,13 @@ InteractResult SeriousnessSystem::onInteract(PetState& pet, InteractType type, u
         // 投喂始终扣减严肃值
         applyDelta = true;
     } else if (type == INTERACT_POKE) {
-        if (pet.stage == STAGE_CHILD) {
-            // lily: 仅动画, 不影响数值
-            applyDelta = false;
-        } else if (!pet.daily_feed.poke_used) {
-            // 成体: 每日首次生效
+        // 每次 poke 都暂停严肃值增长30分钟 (无论是否扣减生效)
+        pet.idle_paused_until = currentTime + POKE_IDLE_PAUSE_SEC;
+
+        // 每日首次 poke 扣减严肃值 (lily和成体统一)
+        if (!pet.daily_feed.poke_used) {
             applyDelta = true;
             pet.daily_feed.poke_used = true;
-        } else {
-            // 成体: 后续仅动画
-            applyDelta = false;
         }
     }
 

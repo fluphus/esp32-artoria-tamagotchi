@@ -95,6 +95,7 @@ struct PetState {
     int16_t health;
     int16_t seriousness;
     uint16_t idle_minute_remainder;     // 严肃值增长计数器余数
+    uint32_t idle_paused_until;         // 严肃值暂停增长截止时间戳, 0=未暂停
 
     uint32_t rhongo_timer_start;
     bool is_rhongomyniad;
@@ -121,6 +122,7 @@ struct PetState {
         health = 50;
         seriousness = 0;
         idle_minute_remainder = 0;
+        idle_paused_until = 0;
 
         rhongo_timer_start = 0;
         is_rhongomyniad = false;

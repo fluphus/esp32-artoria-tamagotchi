@@ -39,6 +39,8 @@ void printStatus() {
         Serial.println(" (adult)");
     Serial.printf("  Fed today:  %d / %d\n", pet.daily_feed.feed_count, DAILY_FEED_LIMIT);
     Serial.printf("  Poke today: %s\n", pet.daily_feed.poke_used ? "used" : "available");
+    if (pet.idle_paused_until > now)
+        Serial.printf("  Idle pause: %lus left\n", pet.idle_paused_until - now);
     if (pet.mapo_tofu_count > 0)
         Serial.printf("  Mapo Tofu:  %d / %d\n", pet.mapo_tofu_count, MAPO_TOFU_CURSE_THRESHOLD);
     if (pet.is_rhongomyniad)
@@ -187,12 +189,11 @@ void doPoke() {
     InteractResult sR = seriousnessSystem.onInteract(pet, INTERACT_POKE, now);
     EvolutionResult eR = evolutionSystem.check(pet, now);
     bool valueChanged = (sR.seriousness_before != sR.seriousness_after);
-    if (pet.stage == STAGE_CHILD)
-        Serial.println("[Poke] Lily smiles! (animation only)");
-    else if (valueChanged)
+    if (valueChanged)
         Serial.printf("[Poke] SR: %d->%d | %s\n", sR.seriousness_before, sR.seriousness_after, TIER_NAMES[sR.tier_after]);
     else
         Serial.println("[Poke] Already poked today! (animation only)");
+    Serial.println("[Poke] Idle growth paused for 30 min.");
     if (sR.tier_changed) Serial.printf("[Poke] Tier: %s -> %s\n", TIER_NAMES[sR.tier_before], TIER_NAMES[sR.tier_after]);
     if (eR.event == EVO_FORM_CHANGED) Serial.printf("[Poke] Form: %s -> %s\n", FORM_NAMES[eR.form_before], FORM_NAMES[eR.form_after]);
 }
