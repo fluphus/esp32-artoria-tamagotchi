@@ -7,6 +7,7 @@
 #include "pet/feeding.h"
 #include "pet/seriousness.h"
 #include "pet/evolution.h"
+#include "input/menu_controller.h"
 
 static PetState pet;
 static char cmdBuf[64];
@@ -16,6 +17,104 @@ static FeedDraw currentDraw;
 static bool drawPending = false;
 static FeedOutcome lastFeedOutcome;
 static bool comboPending = false;
+
+// ============================================================================
+//  调试用 UICallbacks (串口输出)
+// ============================================================================
+
+static UICallbacks debugCallbacks = {
+    // onStatusOpen
+    [](const PetState& p) {
+        Serial.println("[MC] Status opened");
+    },
+    // onStatusClose
+    []() {
+        Serial.println("[MC] Status closed");
+    },
+    // onFeedDrawStart
+    [](const FeedDraw& draw) {
+        Serial.println("[MC] Feed draw started:");
+        for (uint8_t i = 0; i < FEED_DRAW_COUNT; i++) {
+            uint8_t id = draw.food_ids[i];
+            Serial.printf("  [%d] %s %s (%+d)\n", i, FOOD_TABLE[id].name,
+                          FOOD_TABLE[id].is_healthy ? "[H]" : "[J]", FOOD_TABLE[id].health_delta);
+        }
+        Serial.println("[MC] (auto-advancing to FEED_PICK)");
+        // 模拟动画完成, 直接进入选择
+        menuController.onAnimationComplete(UI_FEED_DRAW);
+    },
+    // onFeedCursorMove
+    [](uint8_t cursor, const bool selected[4]) {
+        Serial.printf("[MC] Feed cursor -> %d  [", cursor);
+        for (uint8_t i = 0; i < 4; i++) Serial.printf("%c", selected[i] ? 'X' : '.');
+        Serial.println("]");
+    },
+    // onFeedSlotToggle
+    [](uint8_t slot, bool sel) {
+        Serial.printf("[MC] Feed slot %d %s\n", slot, sel ? "SELECTED" : "DESELECTED");
+    },
+    // onFeedConfirm
+    [](const FeedOutcome& outcome) {
+        Serial.printf("[MC] Feed confirmed! HP: %d->%d\n", outcome.health_before, outcome.health_after);
+        if (outcome.combo_triggered)
+            Serial.printf("[MC] *** COMBO: %s ***\n", COMBO_NAMES[outcome.combo]);
+    },
+    // onFeedCancel
+    []() {
+        Serial.println("[MC] Feed cancelled");
+    },
+    // onSpecialFoodShow
+    [](uint8_t count) {
+        Serial.printf("[MC] Special food selection (%d items):\n", count);
+        for (uint8_t i = 0; i < count; i++)
+            Serial.printf("  %d: %s\n", i, SPECIAL_FOOD_TABLE[i].name);
+    },
+    // onSpecialFoodCursor
+    [](uint8_t cursor) {
+        Serial.printf("[MC] Special food cursor -> %d\n", cursor);
+    },
+    // onSpecialFoodSelect
+    [](uint8_t id) {
+        Serial.printf("[MC] Special food selected: %d (%s)\n", id, SPECIAL_FOOD_TABLE[id].name);
+    },
+    // onPokeStart
+    []() {
+        Serial.println("[MC] Poke animation started");
+        // 模拟动画完成
+        menuController.onAnimationComplete(UI_POKE_ANIM);
+    },
+    // onPokeResult
+    [](bool valueChanged, int16_t srBefore, int16_t srAfter) {
+        if (valueChanged)
+            Serial.printf("[MC] Poke result: SR %d->%d\n", srBefore, srAfter);
+        else
+            Serial.println("[MC] Poke: cooldown (animation only)");
+    },
+    // onDestroyConfirmShow
+    [](uint8_t cursor) {
+        Serial.printf("[MC] Destroy confirm shown (cursor=%d, 0=yes 1=no)\n", cursor);
+    },
+    // onDestroyCursorMove
+    [](uint8_t cursor) {
+        Serial.printf("[MC] Destroy cursor -> %d (%s)\n", cursor, cursor == 0 ? "YES" : "NO");
+    },
+    // onDestroyExecuted
+    []() {
+        Serial.println("[MC] *** DESTROYED ***");
+    },
+    // onDestroyCancelled
+    []() {
+        Serial.println("[MC] Destroy cancelled");
+    },
+    // onEvolution
+    [](const EvolutionResult& r) {
+        Serial.printf("[MC] Evolution: %s -> %s\n", FORM_NAMES[r.form_before], FORM_NAMES[r.form_after]);
+    },
+    // onContextChange
+    [](UIContext from, UIContext to) {
+        Serial.printf("[MC] Context: %s -> %s\n", UI_CONTEXT_NAMES[from], UI_CONTEXT_NAMES[to]);
+    }
+};
 
 void printStatus() {
     char timeBuf[24];
@@ -112,6 +211,11 @@ void printHelp() {
     Serial.println("  hp/sr/age <val>  Debug set");
     Serial.println("  grad           Force graduation");
     Serial.println("  mapo           Debug +1 mapo count");
+    Serial.println("--- Button Simulation ---");
+    Serial.println("  btn l|m|r      Simulate short press");
+    Serial.println("  btnl l|m|r     Simulate long press");
+    Serial.println("  btnr l|m|r     Simulate repeat");
+    Serial.println("  ctx            Show current UI context");
     Serial.println("  h              Help");
     Serial.println("===============================");
 }
@@ -394,6 +498,54 @@ void processCommand(const char* cmd) {
         return;
     }
 
+    // ========================================================================
+    //  模拟按键注入 (调试用, 绕过GPIO)
+    //  btn l / btn m / btn r       - 模拟短按
+    //  btnl l / btnl m / btnl r    - 模拟长按
+    //  btnr l / btnr m / btnr r    - 模拟连按(repeat)
+    //  ctx                         - 显示当前UI上下文
+    // ========================================================================
+    if (strcmp(cmd, "ctx") == 0) {
+        Serial.printf("[MC] Context: %s\n", UI_CONTEXT_NAMES[menuController.getCurrentContext()]);
+        return;
+    }
+
+    if (strncmp(cmd, "btn ", 4) == 0) {
+        ButtonId btn_id;
+        const char* arg = cmd + 4;
+        if (strcmp(arg, "l") == 0) btn_id = BTN_L;
+        else if (strcmp(arg, "m") == 0) btn_id = BTN_M;
+        else if (strcmp(arg, "r") == 0) btn_id = BTN_R;
+        else { Serial.println("[Btn] Usage: btn l|m|r"); return; }
+        Serial.printf("[Btn] Inject PRESS %s (ctx=%s)\n", BTN_NAMES[btn_id], UI_CONTEXT_NAMES[menuController.getCurrentContext()]);
+        menuController.injectButton(btn_id, BTN_EVENT_PRESS);
+        return;
+    }
+
+    if (strncmp(cmd, "btnl ", 5) == 0) {
+        ButtonId btn_id;
+        const char* arg = cmd + 5;
+        if (strcmp(arg, "l") == 0) btn_id = BTN_L;
+        else if (strcmp(arg, "m") == 0) btn_id = BTN_M;
+        else if (strcmp(arg, "r") == 0) btn_id = BTN_R;
+        else { Serial.println("[Btn] Usage: btnl l|m|r"); return; }
+        Serial.printf("[Btn] Inject LONG_PRESS %s (ctx=%s)\n", BTN_NAMES[btn_id], UI_CONTEXT_NAMES[menuController.getCurrentContext()]);
+        menuController.injectButton(btn_id, BTN_EVENT_LONG_PRESS);
+        return;
+    }
+
+    if (strncmp(cmd, "btnr ", 5) == 0) {
+        ButtonId btn_id;
+        const char* arg = cmd + 5;
+        if (strcmp(arg, "l") == 0) btn_id = BTN_L;
+        else if (strcmp(arg, "m") == 0) btn_id = BTN_M;
+        else if (strcmp(arg, "r") == 0) btn_id = BTN_R;
+        else { Serial.println("[Btn] Usage: btnr l|m|r"); return; }
+        Serial.printf("[Btn] Inject REPEAT %s (ctx=%s)\n", BTN_NAMES[btn_id], UI_CONTEXT_NAMES[menuController.getCurrentContext()]);
+        menuController.injectButton(btn_id, BTN_EVENT_REPEAT);
+        return;
+    }
+
     Serial.printf("[Cmd] Unknown: '%s'\n", cmd);
 }
 
@@ -427,6 +579,8 @@ void setup() {
     }
     printHelp();
     printStatus();
+    menuController.init(&pet, &debugCallbacks);
+    Serial.println("[Main] MenuController initialized (btn/btnl/btnr commands ready)");
     Serial.println("\nReady.\n> ");
 }
 

@@ -28,6 +28,10 @@ public:
     // 返回本帧产出的 GameInput 数量
     uint8_t update();
 
+    // 处理已注入的事件 (调试用, 不调用 buttonDriver.update)
+    // 直接将 buttonDriver 中已有的事件映射为 GameInput
+    uint8_t processInjected();
+
     // 获取本帧产出的 GameInput 列表
     static const uint8_t MAX_ACTIONS_PER_FRAME = 8;
     const GameInput* getActions() const { return _actions; }

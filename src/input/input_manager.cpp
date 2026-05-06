@@ -45,6 +45,24 @@ uint8_t InputManager::update() {
     return _action_count;
 }
 
+uint8_t InputManager::processInjected() {
+    _action_count = 0;
+
+    // 不调用 buttonDriver.update(), 直接读取已注入的事件
+    uint8_t eventCount = buttonDriver.getEventCount();
+    const ButtonEvent* events = buttonDriver.getEvents();
+
+    for (uint8_t i = 0; i < eventCount && _action_count < MAX_ACTIONS_PER_FRAME; i++) {
+        const ButtonEvent& evt = events[i];
+        GameInput action = lookupMapping(_context, evt.button, evt.type);
+        if (action != INPUT_NONE) {
+            _actions[_action_count++] = action;
+        }
+    }
+
+    return _action_count;
+}
+
 void InputManager::setContext(UIContext ctx) {
     if (ctx < UI_CONTEXT_COUNT) {
         _context = ctx;

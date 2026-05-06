@@ -171,3 +171,8 @@ void ButtonDriver::resetCombo() {
     _combo.combo_start_ms = 0;
     _combo.combo_fired = false;
 }
+
+void ButtonDriver::injectEvent(ButtonId btn, ButtonEventType type, uint16_t duration) {
+    _event_count = 0;  // 清空之前的事件
+    pushEvent(btn, type, millis(), duration);
+}

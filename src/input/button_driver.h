@@ -67,6 +67,9 @@ public:
     // 重置组合状态 (处理完销毁事件后调用)
     void resetCombo();
 
+    // 注入模拟按键事件 (调试用, 绕过GPIO读取)
+    void injectEvent(ButtonId btn, ButtonEventType type, uint16_t duration = 0);
+
 private:
     ButtonState _buttons[BTN_ID_COUNT];
     ComboState  _combo;

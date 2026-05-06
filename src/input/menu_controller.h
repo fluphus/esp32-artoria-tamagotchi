@@ -98,6 +98,10 @@ public:
     // 手动触发上下文切换 (供外部使用)
     void switchContext(UIContext newCtx);
 
+    // 注入模拟按键事件 (调试用, 绕过GPIO)
+    // 直接向 ButtonDriver 注入事件, 经 InputManager 映射后处理
+    void injectButton(ButtonId btn, ButtonEventType type);
+
 private:
     PetState*       _pet;
     UICallbacks*    _callbacks;

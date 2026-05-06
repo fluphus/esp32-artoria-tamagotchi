@@ -421,3 +421,18 @@ void MenuController::cancelDestroy() {
     safeCallback(_callbacks->onDestroyCancelled);
     switchContext(UI_IDLE);
 }
+
+void MenuController::injectButton(ButtonId btn, ButtonEventType type) {
+    // 注入事件到 ButtonDriver
+    buttonDriver.injectEvent(btn, type, (type == BTN_EVENT_LONG_PRESS) ? BTN_LONG_PRESS_MS : 0);
+
+    // 通过 InputManager 映射 (不走 GPIO 读取)
+    inputManager.processInjected();
+
+    // 处理映射后的 GameInput 动作
+    uint8_t count = inputManager.getActionCount();
+    const GameInput* actions = inputManager.getActions();
+    for (uint8_t i = 0; i < count; i++) {
+        handleAction(actions[i]);
+    }
+}
