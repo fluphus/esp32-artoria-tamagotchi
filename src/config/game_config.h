@@ -1,4 +1,4 @@
-// src/config/game_config.h
+﻿// src/config/game_config.h
 
 #ifndef GAME_CONFIG_H
 #define GAME_CONFIG_H
@@ -58,7 +58,7 @@
 
 // --- 存档 ---
 #define SAVE_NVS_NAMESPACE          "fate_tama"
-#define SAVE_DATA_VERSION           5       // 版本号升级 (双槽存档)
+#define SAVE_DATA_VERSION           6       // 版本号升级 (增加 save_time 离线补偿)
 
 // --- 销毁 ---
 #define DESTROY_COMBO_HOLD_MS       3000

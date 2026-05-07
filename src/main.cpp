@@ -21,9 +21,9 @@ static PetState pet;
 static char cmdBuf[64];
 static uint8_t cmdLen = 0;
 
-// ????: ????????
+// 离线补偿: 等待串口设置时间
 static bool waitingForTimeSet = false;
-static uint32_t loadedSaveTime = 0;  // ?????????
+static uint32_t loadedSaveTime = 0;  // 存档中记录的时间戳
 
 // ============================================================================
 //  UICallbacks implementation (updates DisplayManager)
@@ -130,11 +130,11 @@ static UICallbacks gameCallbacks = {
     // onContextChange
     [](UIContext from, UIContext to) {
         Serial.printf("[MC] Context: %s -> %s\n", UI_CONTEXT_NAMES[from], UI_CONTEXT_NAMES[to]);
-        // 同步 DisplayPage �?UIContext
+        // 同步 DisplayPage �?UIContext
         switch (to) {
             case UI_IDLE:
-                // 动画播放中不切页�? 等动画结束后再切
-                // Page hold 期间也不切页�? �?hold 结束后自动切
+                // 动画播放中不切页�? 等动画结束后再切
+                // Page hold 期间也不切页�? �?hold 结束后自动切
                 if (!DisplayManager::isAnimationPlaying() && !DisplayManager::isPageHoldActive())
                     DisplayManager::switchPage(PAGE_IDLE);
                 break;
@@ -151,7 +151,7 @@ static UICallbacks gameCallbacks = {
                 DisplayManager::switchPage(PAGE_DESTROY_CONFIRM);
                 break;
             default:
-                // UI_FEED_DRAW, UI_POKE_ANIM, UI_EVOLUTION 由具�?show*() 负责切页
+                // UI_FEED_DRAW, UI_POKE_ANIM, UI_EVOLUTION 由具�?show*() 负责切页
                 break;
         }
     }
@@ -295,7 +295,7 @@ void doDayEnd() {
         Serial.printf("[DayEnd] Graduation: %s\n", EVO_EVENT_NAMES[evo.event]);
         DisplayManager::showChildGraduation(evo, pet.alignment);
     } else {
-        // 只有非毕业情况才检查成年进�?
+        // 只有非毕业情况才检查成年进�?
         if (evo.event == EVO_NONE && pet.stage == STAGE_ADULT)
             evo = evolutionSystem.check(pet, now);
         if (evo.event != EVO_NONE) {
@@ -324,7 +324,7 @@ void doReset() {
 }
 
 // ============================================================================
-//  ?????? - ???????????
+//  离线时间补偿 - 模拟离线期间经过的天数
 // ============================================================================
 
 void skipTime(uint32_t offlineSeconds) {
@@ -338,14 +338,14 @@ void skipTime(uint32_t offlineSeconds) {
 
     Serial.printf("[Offline] Compensating: %lu days + %lu minutes\n", offlineDays, remainingMinutes);
 
-    // ???? (? d ????)
+    // 逐天结算 (与 d 命令等效)
     for (uint32_t i = 0; i < offlineDays; i++) {
         doDayEnd();
         timeManager.advanceDays(1);
-        timeManager.checkNewDay();  // ?? newDay ??
+        timeManager.checkNewDay();  // 消耗 newDay 标记
     }
 
-    // ????????????
+    // 结算剩余分钟的严肃值增长
     if (remainingMinutes > 0) {
         timeManager.advanceMinutes(remainingMinutes);
         uint32_t now = timeManager.now();
@@ -369,7 +369,7 @@ void processCommand(const char* cmd) {
     while (*cmd == ' ') cmd++;
     if (strlen(cmd) == 0) return;
 
-    // SET_TIME ??: ?????? (?????, ???????)
+    // SET_TIME 命令: 设置系统时间 (离线补偿用, 任何状态下可用)
     if (strncmp(cmd, "SET_TIME ", 9) == 0) {
         uint32_t timestamp = strtoul(cmd + 9, nullptr, 10);
         if (timestamp < 1000000000UL) {
@@ -378,13 +378,13 @@ void processCommand(const char* cmd) {
         }
         TimeInfo t = timeManager.epochToTimeInfo(timestamp);
         timeManager.setSimulatedTime(t.year, t.month, t.day, t.hour, t.minute);
-        // ??????
+        // 补偿秒数精度
         Serial.printf("[Time] System time set to: %04d-%02d-%02d %02d:%02d:%02d\n",
                       t.year, t.month, t.day, t.hour, t.minute, t.second);
 
         if (waitingForTimeSet) {
             waitingForTimeSet = false;
-            // ?????????
+            // 计算离线时长并补偿
             if (loadedSaveTime > 0 && timestamp > loadedSaveTime) {
                 uint32_t offlineDuration = timestamp - loadedSaveTime;
                 Serial.printf("[Offline] Duration: %lu seconds (%.1f days)\n",
@@ -393,7 +393,7 @@ void processCommand(const char* cmd) {
             } else {
                 Serial.println("[Offline] No compensation needed (no save time or time went backwards).");
             }
-            // ??????
+            // 进入正常运行
             DisplayManager::showSystemReady();
             Serial.println("[Main] Time set, entering normal operation.");
             printStatus();
@@ -401,7 +401,7 @@ void processCommand(const char* cmd) {
         return;
     }
 
-    // ????????, ??? SET_TIME ? s/h ??
+    // 等待时间设置期间, 只允许 SET_TIME 和 s/h 命令
     if (waitingForTimeSet) {
         if (strcmp(cmd, "s") == 0) { printStatus(); return; }
         if (strcmp(cmd, "h") == 0) { printHelp(); return; }
@@ -638,7 +638,7 @@ void setup() {
             DisplayManager::showSaveLoaded();
             loadedSaveTime = saveManager.getLastSaveTime();
             if (loadedSaveTime > 0) {
-                // ???????, ??????????
+                // 有存档时间记录, 进入等待时间设置状态
                 waitingForTimeSet = true;
                 Serial.printf("[Main] Last save time: %lu\n", loadedSaveTime);
                 Serial.println("[Main] *** Please set current time via: SET_TIME <unix_timestamp> ***");
@@ -673,7 +673,7 @@ void loop() {
     // 1. Serial commands (always active, even during time-set wait)
     readSerialCommand();
 
-    // ????????, ????????????
+    // 等待时间设置期间, 只处理串口命令和显示更新
     if (waitingForTimeSet) {
         DisplayManager::update(millis());
         delay(10);
