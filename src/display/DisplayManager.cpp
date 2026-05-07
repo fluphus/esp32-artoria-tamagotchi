@@ -42,18 +42,33 @@ void DisplayManager::init() {
 void DisplayManager::update(uint32_t nowMs) {
     // --- 动画超时检测 ---
     if (_currentAnim != ANIM_NONE && _animDurationMs > 0) {
-        if (nowMs - _animStartedMs >= _animDurationMs) {
+        uint32_t elapsed = nowMs - _animStartedMs;
+        if (elapsed >= _animDurationMs) {
             // 动画结束
             AnimState finishedAnim = _currentAnim;
             UIContext ctx = _animCompleteContext;
             _currentAnim = ANIM_NONE;
             _animDurationMs = 0;
+            _model.animState = ANIM_NONE;
+            _model.animElapsedMs = 0;
+            _model.animFrameIndex = 0;
             markDirty();
 
             // 通知 MenuController 动画完成
             if (ctx != UI_IDLE || finishedAnim == ANIM_POKE) {
                 menuController.onAnimationComplete(ctx);
+            } else {
+                // 动画完成 context 为 UI_IDLE 且不需要通知 MenuController 时,
+                // 直接切回 idle 页面 (如 ANIM_DESTROY, ANIM_COMBO, ANIM_DAY_END 等)
+                switchPage(PAGE_IDLE);
             }
+        } else {
+            // 动画播放中: 更新帧状态并持续刷新
+            _model.animState = _currentAnim;
+            _model.animElapsedMs = elapsed;
+            // 按 DISPLAY_FRAME_MS 计算帧索引
+            _model.animFrameIndex = (uint8_t)(elapsed / DISPLAY_FRAME_MS);
+            markDirty();
         }
     }
 
@@ -69,13 +84,9 @@ void DisplayManager::update(uint32_t nowMs) {
             // 至少停留 PAGE_DURATION_FEED_RESULT
             if (_currentAnim == ANIM_NONE &&
                 (nowMs - _pageEnteredMs >= PAGE_DURATION_FEED_RESULT)) {
-                // 如果有 combo pending, 不自动切走 (由 MenuController 管理)
-                // 否则回 idle
-                if (_model.feedOutcome.combo_triggered) {
-                    // combo 路径: MenuController 已切到 SPECIAL_FOOD
-                } else {
-                    switchPage(PAGE_IDLE);
-                }
+                // combo 路径: ANIM_COMBO 动画结束后会由 onAnimationComplete 切到 SPECIAL_FOOD
+                // 非 combo 路径: 回 idle
+                switchPage(PAGE_IDLE);
             }
             break;
 
@@ -313,7 +324,7 @@ void DisplayManager::showFeedResult(const FeedOutcome& outcome, int16_t srAfter)
 }
 
 void DisplayManager::showFeedComboTriggered(ComboType combo) {
-    setAnimation(ANIM_COMBO, ANIM_DURATION_COMBO, UI_IDLE);
+    setAnimation(ANIM_COMBO, ANIM_DURATION_COMBO, UI_SPECIAL_FOOD);
     markDirty();
 }
 
@@ -505,6 +516,7 @@ void DisplayManager::showDestroyCursorMove(uint8_t cursor) {
 
 void DisplayManager::showDestroyExecuted(Form destroyedForm) {
     _model.destroyedForm = destroyedForm;
+    switchPage(PAGE_EVOLUTION);  // 复用进化页面展示销毁动画
     setAnimation(ANIM_DESTROY, ANIM_DURATION_DESTROY, UI_IDLE);
 }
 

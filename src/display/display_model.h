@@ -80,6 +80,11 @@ struct DisplayModel {
     char dateStr[6];                // "MM/DD"
     uint16_t ageDay;
 
+    // --- 动画帧状态 (供 renderer 使用) ---
+    uint8_t animState;              // 当前 AnimState 枚举值
+    uint32_t animElapsedMs;         // 动画已播放时间
+    uint8_t animFrameIndex;         // 当前帧索引 (由 update 计算)
+
     // --- 初始化 ---
     void clear() {
         memset(this, 0, sizeof(DisplayModel));

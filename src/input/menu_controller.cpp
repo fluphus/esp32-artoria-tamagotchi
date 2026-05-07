@@ -4,6 +4,7 @@
 #include "menu_controller.h"
 #include "../config/game_config.h"
 #include "../config/food_table.h"
+#include "../display/DisplayManager.h"
 
 MenuController menuController;
 
@@ -27,8 +28,13 @@ void MenuController::init(PetState* pet, UICallbacks* callbacks) {
 }
 
 void MenuController::update() {
-    // 更新输入管理器
+    // 更新输入管理器 (刷新硬件状态)
     inputManager.update();
+
+    // 如果 display 层正在阻塞输入 (动画播放中/boot/evolution), 不处理动作
+    if (DisplayManager::isPageBlockingInput()) {
+        return;
+    }
 
     // 优先检测三键销毁组合
     if (inputManager.isDestroyComboTriggered()) {
@@ -60,6 +66,13 @@ void MenuController::onAnimationComplete(UIContext animContext) {
         case UI_EVOLUTION:
             // 进化动画完成, 回到主界面
             switchContext(UI_IDLE);
+            break;
+        case UI_SPECIAL_FOOD:
+            // combo 动画完成, 进入特殊食物选择
+            if (_combo_pending) {
+                switchContext(UI_SPECIAL_FOOD);
+                safeCallback(_callbacks->onSpecialFoodShow, _sfood_count);
+            }
             break;
         default:
             break;
@@ -342,9 +355,9 @@ void MenuController::confirmFeed() {
         _sfood_cursor = 0;
         _sfood_count = SFOOD_COUNT;
 
-        // 切换到特殊食物选择
-        switchContext(UI_SPECIAL_FOOD);
-        safeCallback(_callbacks->onSpecialFoodShow, _sfood_count);
+        // 不立即切换到 UI_SPECIAL_FOOD, 等 combo 动画结束后由 onAnimationComplete 处理
+        // 先切回 idle 上下文 (动画播放中输入会被阻塞)
+        switchContext(UI_IDLE);
     } else {
         _feed.active = false;
         switchContext(UI_IDLE);

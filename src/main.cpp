@@ -126,6 +126,29 @@ static UICallbacks gameCallbacks = {
     // onContextChange
     [](UIContext from, UIContext to) {
         Serial.printf("[MC] Context: %s -> %s\n", UI_CONTEXT_NAMES[from], UI_CONTEXT_NAMES[to]);
+        // 同步 DisplayPage 与 UIContext
+        switch (to) {
+            case UI_IDLE:
+                // 动画播放中不切页面, 等动画结束后再切
+                if (!DisplayManager::isAnimationPlaying())
+                    DisplayManager::switchPage(PAGE_IDLE);
+                break;
+            case UI_STATUS:
+                DisplayManager::switchPage(PAGE_STATUS);
+                break;
+            case UI_FEED_PICK:
+                DisplayManager::switchPage(PAGE_FEED_PICK);
+                break;
+            case UI_SPECIAL_FOOD:
+                DisplayManager::switchPage(PAGE_SPECIAL_FOOD);
+                break;
+            case UI_DESTROY_CONFIRM:
+                DisplayManager::switchPage(PAGE_DESTROY_CONFIRM);
+                break;
+            default:
+                // UI_FEED_DRAW, UI_POKE_ANIM, UI_EVOLUTION 由具体 show*() 负责切页
+                break;
+        }
     }
 };
 
@@ -198,7 +221,6 @@ void printHelp() {
     Serial.println("=== Fate Tamagotchi Console ===");
     Serial.println("  s              Status");
     Serial.println("  fl             Food list");
-    Serial.println("  p              Poke");
     Serial.println("  t <min>        Advance N minutes");
     Serial.println("  d              Advance 1 day");
     Serial.println("  save / load / erase");
@@ -264,13 +286,16 @@ void doDayEnd() {
 
     EvolutionResult evo = evolutionSystem.checkChildGraduation(pet);
     if (evo.event == EVO_CHILD_TO_WHITE || evo.event == EVO_CHILD_TO_BLACK) {
+        Serial.printf("[DayEnd] Graduation: %s\n", EVO_EVENT_NAMES[evo.event]);
         DisplayManager::showChildGraduation(evo, pet.alignment);
-    }
-    if (evo.event == EVO_NONE && pet.stage == STAGE_ADULT)
-        evo = evolutionSystem.check(pet, now);
-    if (evo.event != EVO_NONE) {
-        Serial.printf("[DayEnd] Evo: %s\n", EVO_EVENT_NAMES[evo.event]);
-        DisplayManager::showEvolutionEvent(evo, pet.seriousness);
+    } else {
+        // 只有非毕业情况才检查成年进化
+        if (evo.event == EVO_NONE && pet.stage == STAGE_ADULT)
+            evo = evolutionSystem.check(pet, now);
+        if (evo.event != EVO_NONE) {
+            Serial.printf("[DayEnd] Evo: %s\n", EVO_EVENT_NAMES[evo.event]);
+            DisplayManager::showEvolutionEvent(evo, pet.seriousness);
+        }
     }
 
     feedingSystem.resetDaily(pet, timeManager.getDay());
@@ -289,7 +314,7 @@ void doReset() {
     feedingSystem.resetDaily(pet, timeManager.getDay());
     SaveResult r = saveManager.save(pet);
     if (r == SAVE_OK) saveManager.markSaved(now);
-    DisplayManager::showDestroyReset();
+    // 不再立即调用 showDestroyReset(), 动画结束后 DisplayManager::update() 会自动切回 PAGE_IDLE
     printStatus();
 }
 
