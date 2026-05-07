@@ -48,7 +48,7 @@ EvolutionResult EvolutionSystem::checkChildGraduation(PetState& pet) {
     if (pet.stage != STAGE_CHILD) return result;
     if (pet.age_days < CHILD_PERIOD_DAYS) return result;
 
-    // nobu ²»»á×ÔÈ»³É³¤
+    // nobu ä¸ä¼šè‡ªç„¶æˆé•¿
     if (pet.is_nobu) return result;
 
     pet.stage = STAGE_ADULT;
@@ -121,12 +121,12 @@ EvolutionResult EvolutionSystem::check(PetState& pet, uint32_t currentTime) {
     result.form_after = pet.form;
     result.tier = seriousnessSystem.getTier(pet.seriousness);
 
-    // nobu Â·Ïß: ²»½øĞĞÕı³£½ø»¯¼ì²é
+    // nobu è·¯çº¿: ä¸è¿›è¡Œæ­£å¸¸è¿›åŒ–æ£€æŸ¥
     if (pet.is_nobu || pet.is_oda_nobunaga) {
         return result;
     }
 
-        // ÖÕÌ¬¼ì²é
+        // ç»ˆæ€æ£€æŸ¥
     if (pet.is_rhongomyniad) {
         result.form_after = FORM_WHITE_LANCER_RHONGOMYNIAD;
         return result;
@@ -136,14 +136,14 @@ EvolutionResult EvolutionSystem::check(PetState& pet, uint32_t currentTime) {
         return result;
     }
 
-    // ÂéÆÅ¶¹¸¯×çÖäÓÅÏÈ¼ì²é
+    // éº»å©†è±†è…è¯…å’’ä¼˜å…ˆæ£€æŸ¥
     EvolutionResult mapoResult = checkMapoCurse(pet);
     if (mapoResult.event != EVO_NONE) return mapoResult;
 
-    // Ó×ÄêÆÚ²»¼ì²é³ÉÌåĞÎÌ¬
+    // å¹¼å¹´æœŸä¸æ£€æŸ¥æˆä½“å½¢æ€
     if (pet.stage != STAGE_ADULT) return result;
 
-    // °×ÏßÊ¨×ÓÍõ¼ì²é
+    // ç™½çº¿ç‹®å­ç‹æ£€æŸ¥
     if (pet.alignment == ALIGN_WHITE && pet.seriousness >= RHONGOMYNIAD_THRESHOLD) {
         if (pet.rhongo_timer_start > 0) {
             uint32_t elapsed = currentTime - pet.rhongo_timer_start;
@@ -160,7 +160,7 @@ EvolutionResult EvolutionSystem::check(PetState& pet, uint32_t currentTime) {
         }
     }
 
-    // ÑÏËàÖµÇø¼äĞÎÌ¬ÇĞ»»
+    // ä¸¥è‚ƒå€¼åŒºé—´å½¢æ€åˆ‡æ¢
     Form resolved = resolveAdultForm(pet);
     if (resolved != pet.form) {
         Form oldForm = pet.form;
@@ -193,13 +193,13 @@ EvolutionResult EvolutionSystem::checkNobuMapo(PetState& pet) {
     if (!pet.is_nobu) return result;
     if (pet.is_oda_nobunaga) return result;
 
-    // nobu µÄÂéÆÅ¶¹¸¯ÊÂ¼ş´¥·¢½ø»¯Îª Oda Nobunaga
+    // nobu çš„éº»å©†è±†è…äº‹ä»¶è§¦å‘è¿›åŒ–ä¸º Oda Nobunaga
     if (pet.mapo_tofu_count >= 1) {
         pet.is_nobu = false;
         pet.is_oda_nobunaga = true;
         pet.form = FORM_ODA_NOBUNAGA;
         pet.stage = STAGE_ADULT;
-        pet.mapo_tofu_count = 1;  // Ëø¶¨Îª 1, ·ÀÖ¹´¥·¢ºÚÊ¨×ÓÍõ
+        pet.mapo_tofu_count = 1;  // é”å®šä¸º 1, é˜²æ­¢è§¦å‘é»‘ç‹®å­ç‹
         result.event = EVO_NOBU_EVOLUTION;
         result.form_after = FORM_ODA_NOBUNAGA;
 

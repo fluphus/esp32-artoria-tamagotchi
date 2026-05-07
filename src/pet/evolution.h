@@ -13,7 +13,7 @@ enum EvolutionEvent : uint8_t {
     EVO_CHILD_TO_BLACK,
     EVO_FORM_CHANGED,
     EVO_RHONGOMYNIAD,
-    EVO_BLACK_RHONGOMYNIAD,         // ÐÂÔö: ÂéÆÅ¶¹¸¯×çÖä
+    EVO_BLACK_RHONGOMYNIAD,         // æ–°å¢ž: éº»å©†è±†è…è¯…å’’
     EVO_NOBU_EVOLUTION,             // nobu -> Oda Nobunaga
     EVO_DESTROYED
 };
@@ -24,7 +24,7 @@ inline const char* EVO_EVENT_NAMES[] = {
     "Child -> Black line",
     "Form changed",
     "RHONGOMYNIAD (irreversible)",
-    "BLACK RHONGOMYNIAD (curse)",   // ÐÂÔö
+    "BLACK RHONGOMYNIAD (curse)",   // æ–°å¢ž
     "nobu -> Oda Nobunaga",
     "Destroyed & Reset"
 };
@@ -40,7 +40,7 @@ class EvolutionSystem {
 public:
     EvolutionResult check(PetState& pet, uint32_t currentTime);
     EvolutionResult checkChildGraduation(PetState& pet);
-    EvolutionResult checkMapoCurse(PetState& pet);     // ÐÂÔö
+    EvolutionResult checkMapoCurse(PetState& pet);     // æ–°å¢ž
     EvolutionResult checkNobuMapo(PetState& pet);
     void destroy(PetState& pet, uint32_t currentTime);
     void destroyToNobu(PetState& pet, uint32_t currentTime, uint16_t prevAgeDays);

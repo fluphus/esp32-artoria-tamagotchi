@@ -1,7 +1,7 @@
 // src/display/DisplayManager.h
-// ÏÔÊ¾¹ÜÀíÆ÷ - UI ×´Ì¬»ú
-// ²»Ö±½ÓĞ´»æÖÆ´úÂë, Ö»¹ÜÀíÒ³Ãæ/¶¯»­×´Ì¬ºÍ DisplayModel
-// Êµ¼Ê»æÖÆÎ¯ÍĞ¸ø DisplayRenderer
+// æ˜¾ç¤ºç®¡ç†å™¨ - UI çŠ¶æ€æœº
+// ä¸ç›´æ¥å†™ç»˜åˆ¶ä»£ç , åªç®¡ç†é¡µé¢/åŠ¨ç”»çŠ¶æ€å’Œ DisplayModel
+// å®é™…ç»˜åˆ¶å§”æ‰˜ç»™ DisplayRenderer
 
 #ifndef DISPLAY_MANAGER_H
 #define DISPLAY_MANAGER_H
@@ -18,58 +18,58 @@
 #include "../input/input_map.h"
 
 // ============================================================================
-//  Ò³ÃæÃ¶¾Ù (Óë UIContext ¶ÔÓ¦, µ«ÓÃÓÚÏÔÊ¾²ã¶ÀÁ¢¹ÜÀí)
+//  é¡µé¢æšä¸¾ (ä¸ UIContext å¯¹åº”, ä½†ç”¨äºæ˜¾ç¤ºå±‚ç‹¬ç«‹ç®¡ç†)
 // ============================================================================
 
 enum DisplayPage : uint8_t {
-    PAGE_BOOT = 0,              // Æô¶¯»­Ãæ
-    PAGE_IDLE,                  // ´ı»úÖ÷½çÃæ (³èÎï¶¯»­)
-    PAGE_STATUS,                // ×´Ì¬Ãæ°å
-    PAGE_FEED_DRAW,             // Í¶Î¹: ³é¿¨Õ¹Ê¾
-    PAGE_FEED_PICK,             // Í¶Î¹: Ñ¡ÔñÊ³Îï
-    PAGE_FEED_RESULT,           // Í¶Î¹: ½á¹ûÕ¹Ê¾
-    PAGE_SPECIAL_FOOD,          // ÌØÊâÊ³ÎïÑ¡Ôñ
-    PAGE_POKE_ANIM,             // ´ÁÒ»´Á¶¯»­
-    PAGE_EVOLUTION,             // ½ø»¯Ñİ³ö
-    PAGE_DESTROY_CONFIRM,       // Ïú»ÙÈ·ÈÏ
-    PAGE_DAY_END,               // ÈÕ½áËãÕ¹Ê¾
-    PAGE_WAIT_TIME_SET,         // µÈ´ı´®¿ÚÉèÖÃÊ±¼ä
+    PAGE_BOOT = 0,              // å¯åŠ¨ç”»é¢
+    PAGE_IDLE,                  // å¾…æœºä¸»ç•Œé¢ (å® ç‰©åŠ¨ç”»)
+    PAGE_STATUS,                // çŠ¶æ€é¢æ¿
+    PAGE_FEED_DRAW,             // æŠ•å–‚: æŠ½å¡å±•ç¤º
+    PAGE_FEED_PICK,             // æŠ•å–‚: é€‰æ‹©é£Ÿç‰©
+    PAGE_FEED_RESULT,           // æŠ•å–‚: ç»“æœå±•ç¤º
+    PAGE_SPECIAL_FOOD,          // ç‰¹æ®Šé£Ÿç‰©é€‰æ‹©
+    PAGE_POKE_ANIM,             // æˆ³ä¸€æˆ³åŠ¨ç”»
+    PAGE_EVOLUTION,             // è¿›åŒ–æ¼”å‡º
+    PAGE_DESTROY_CONFIRM,       // é”€æ¯ç¡®è®¤
+    PAGE_DAY_END,               // æ—¥ç»“ç®—å±•ç¤º
+    PAGE_WAIT_TIME_SET,         // ç­‰å¾…ä¸²å£è®¾ç½®æ—¶é—´
     PAGE_COUNT
 };
 
 // ============================================================================
-//  ¶¯»­×´Ì¬Ã¶¾Ù
+//  åŠ¨ç”»çŠ¶æ€æšä¸¾
 // ============================================================================
 
 enum AnimState : uint8_t {
-    ANIM_NONE = 0,              // ÎŞ¶¯»­
-    ANIM_IDLE,                  // ´ı»úºôÎü/Ò¡°Ú
-    ANIM_EATING,                // ³Ô·¹¶¯»­
-    ANIM_POKE,                  // ´ÁÒ»´Á·´Ó¦
-    ANIM_EVOLUTION,             // ½ø»¯¹âĞ§
-    ANIM_COMBO,                 // Á¬Ğ¯ÌØĞ§
-    ANIM_MAPO_TOFU,             // ÂéÆÅ¶¹¸¯²Êµ°
-    ANIM_RHONGOMYNIAD,          // Ê¨×ÓÍõÖÕÌ¬Ñİ³ö
-    ANIM_BLACK_RHONGOMYNIAD,    // ºÚÊ¨×ÓÍõÖÕÌ¬Ñİ³ö
-    ANIM_DESTROY,               // Ïú»Ù¶¯»­
-    ANIM_DAY_END,               // ÈÕ½áËã¹ı³¡
-    ANIM_NOBU_EVENT,            // nobu ²Êµ°ÊÂ¼ş (Õ¼Î»¶¯»­)
-    ANIM_SAVE,                  // ´æµµÍ¼±êÉÁË¸
+    ANIM_NONE = 0,              // æ— åŠ¨ç”»
+    ANIM_IDLE,                  // å¾…æœºå‘¼å¸/æ‘‡æ‘†
+    ANIM_EATING,                // åƒé¥­åŠ¨ç”»
+    ANIM_POKE,                  // æˆ³ä¸€æˆ³ååº”
+    ANIM_EVOLUTION,             // è¿›åŒ–å…‰æ•ˆ
+    ANIM_COMBO,                 // è¿æºç‰¹æ•ˆ
+    ANIM_MAPO_TOFU,             // éº»å©†è±†è…å½©è›‹
+    ANIM_RHONGOMYNIAD,          // ç‹®å­ç‹ç»ˆæ€æ¼”å‡º
+    ANIM_BLACK_RHONGOMYNIAD,    // é»‘ç‹®å­ç‹ç»ˆæ€æ¼”å‡º
+    ANIM_DESTROY,               // é”€æ¯åŠ¨ç”»
+    ANIM_DAY_END,               // æ—¥ç»“ç®—è¿‡åœº
+    ANIM_NOBU_EVENT,            // nobu å½©è›‹äº‹ä»¶ (å ä½åŠ¨ç”»)
+    ANIM_SAVE,                  // å­˜æ¡£å›¾æ ‡é—ªçƒ
     ANIM_COUNT
 };
 
 // ============================================================================
-//  DisplayManager Àà (¾²Ì¬·½·¨, È«¾Ö UI ×´Ì¬»ú)
+//  DisplayManager ç±» (é™æ€æ–¹æ³•, å…¨å±€ UI çŠ¶æ€æœº)
 // ============================================================================
 
 class DisplayManager {
 public:
-    // ==== ÉúÃüÖÜÆÚ ====
+    // ==== ç”Ÿå‘½å‘¨æœŸ ====
     static void init();
     static void update(uint32_t nowMs);
     static void renderIfDirty();
 
-    // ==== Ò³Ãæ/¶¯»­¿ØÖÆ ====
+    // ==== é¡µé¢/åŠ¨ç”»æ§åˆ¶ ====
     static void switchPage(DisplayPage page);
     static DisplayPage getCurrentPage();
     static void setAnimation(AnimState anim, uint32_t durationMs, UIContext completeContext);
@@ -79,20 +79,20 @@ public:
     static bool isPageBlockingInput();
     static bool isPageHoldActive();
 
-    // ==== Êı¾İ¸üĞÂ½Ó¿Ú (show* º¯ÊıÖ»¸üĞÂ model + dirty) ====
+    // ==== æ•°æ®æ›´æ–°æ¥å£ (show* å‡½æ•°åªæ›´æ–° model + dirty) ====
 
-    // ÏµÍ³
+    // ç³»ç»Ÿ
     static void showBootScreen();
     static void showSaveLoaded();
     static void showSaveCorruptedNewGame();
     static void showNewGame();
     static void showSystemReady();
 
-    // ×´Ì¬Ãæ°å
+    // çŠ¶æ€é¢æ¿
     static void showStatusPanel(const PetState& pet);
     static void hideStatusPanel();
 
-    // Í¶Î¹Á÷³Ì
+    // æŠ•å–‚æµç¨‹
     static void showCannotInteract();
     static void showFeedCheckFailed(FeedResult result, uint32_t waitSeconds);
     static void showFeedDraw(const FeedDraw& draw);
@@ -102,20 +102,20 @@ public:
     static void showFeedComboTriggered(ComboType combo);
     static void showFeedCancel();
 
-    // ÌØÊâÊ³Îï
+    // ç‰¹æ®Šé£Ÿç‰©
     static void showSpecialFoodSelection(uint8_t count);
     static void showSpecialFoodCursor(uint8_t cursor);
     static void showSpecialFoodConfirm(uint8_t id, const FeedOutcome& outcome);
 
-    // ÂéÆÅ¶¹¸¯²Êµ°
+    // éº»å©†è±†è…å½©è›‹
     static void showMapoTofuTriggered(uint8_t currentCount, uint8_t threshold);
     static void showMapoTofuCurseActivated();
 
-    // ´ÁÒ»´Á
+    // æˆ³ä¸€æˆ³
     static void showPokeAnimation();
     static void showPokeResult(bool valueChanged, int16_t srBefore, int16_t srAfter);
 
-    // ÈÕ½áËã
+    // æ—¥ç»“ç®—
     static void showDayEndStart();
     static void showDayEndIdleSR(int16_t srBefore, int16_t srAfter,
                                   SeriousnessTier tierBefore, SeriousnessTier tierAfter);
@@ -126,38 +126,38 @@ public:
     static void showDayEndComplete(uint16_t dayNumber);
     static void showNewDayDetected();
 
-    // ½ø»¯ÏµÍ³
+    // è¿›åŒ–ç³»ç»Ÿ
     static void showChildGraduation(const EvolutionResult& result, Alignment alignment);
     static void showFormChange(Form formBefore, Form formAfter, int16_t seriousness,
                                SeriousnessTier tier);
     static void showEvolutionEvent(const EvolutionResult& result, int16_t srAfter);
 
-    // ÑÏËàÖµÏµÍ³
+    // ä¸¥è‚ƒå€¼ç³»ç»Ÿ
     static void showIdleTierChange(SeriousnessTier tierBefore, SeriousnessTier tierAfter);
     static void showIdleFormChange(Form formBefore, Form formAfter);
     static void showIdleRhongoCountdown(uint32_t remainingHours);
     static void showMissedFeedPenalty(int16_t srBefore, int16_t srAfter, int16_t penalty);
 
-    // Ïú»Ù/ÖØÖÃ
+    // é”€æ¯/é‡ç½®
     static void showDestroyConfirm(uint8_t cursor);
     static void showDestroyCursorMove(uint8_t cursor);
     static void showDestroyExecuted(Form destroyedForm);
     static void showDestroyReset();
     static void showDestroyCancelled();
 
-    // ´æµµÏµÍ³
+    // å­˜æ¡£ç³»ç»Ÿ
     static void showAutoSave();
 
-    // µÈ´ıÊ±¼äÉèÖÃ
+    // ç­‰å¾…æ—¶é—´è®¾ç½®
     static void showWaitTimeSet();
 
     // Toast
     static void showToast(const char* message, uint32_t durationMs = PAGE_DURATION_TOAST);
 
-    // ³èÎï¿ìÕÕ¸üĞÂ (Ã¿Ö¡ÓÉ main µ÷ÓÃ)
+    // å® ç‰©å¿«ç…§æ›´æ–° (æ¯å¸§ç”± main è°ƒç”¨)
     static void updatePetSnapshot(const PetState& pet);
 
-    // »ñÈ¡ model (Ö»¶Á, ¹©Íâ²¿²éÑ¯)
+    // è·å– model (åªè¯», ä¾›å¤–éƒ¨æŸ¥è¯¢)
     static const DisplayModel& getModel() { return _model; }
 
 private:
@@ -166,29 +166,29 @@ private:
     static uint32_t     _pageEnteredMs;
     static uint32_t     _animStartedMs;
     static uint32_t     _animDurationMs;
-    static UIContext    _animCompleteContext;    // ¶¯»­½áÊøºóÍ¨ÖªµÄÉÏÏÂÎÄ
+    static UIContext    _animCompleteContext;    // åŠ¨ç”»ç»“æŸåé€šçŸ¥çš„ä¸Šä¸‹æ–‡
     static bool         _dirty;
     static DisplayModel _model;
     static uint32_t     _lastRenderMs;
 
-    // --- Page hold »úÖÆ ---
-    static bool         _pageHoldActive;        // ÊÇ·ñÕıÔÚ hold
-    static uint32_t     _pageHoldUntilMs;       // hold ½áÊøÊ±¼ä
-    static DisplayPage  _pageAfterHold;         // hold ½áÊøºóÇĞ»»µ½µÄÒ³Ãæ
-    static UIContext    _contextAfterHold;      // hold ½áÊøºóÇĞ»»µ½µÄÉÏÏÂÎÄ
+    // --- Page hold æœºåˆ¶ ---
+    static bool         _pageHoldActive;        // æ˜¯å¦æ­£åœ¨ hold
+    static uint32_t     _pageHoldUntilMs;       // hold ç»“æŸæ—¶é—´
+    static DisplayPage  _pageAfterHold;         // hold ç»“æŸååˆ‡æ¢åˆ°çš„é¡µé¢
+    static UIContext    _contextAfterHold;      // hold ç»“æŸååˆ‡æ¢åˆ°çš„ä¸Šä¸‹æ–‡
 
-    // --- Pending evolution (ÂéÆÅ×çÖäÁ´Ê½¶¯»­) ---
+    // --- Pending evolution (éº»å©†è¯…å’’é“¾å¼åŠ¨ç”») ---
     static bool             _pendingEvolutionActive;
     static EvolutionResult  _pendingEvolution;
     static int16_t          _pendingEvolutionSrAfter;
 
-    // ÄÚ²¿: ±ê¼ÇÔà
+    // å†…éƒ¨: æ ‡è®°è„
     static void markDirty();
 
-    // ÄÚ²¿: »ñÈ¡¶¯»­Ê±³¤
+    // å†…éƒ¨: è·å–åŠ¨ç”»æ—¶é•¿
     static uint32_t getAnimDuration(AnimState anim);
 
-    // ÄÚ²¿: ÉèÖÃÒ³Ãæ hold
+    // å†…éƒ¨: è®¾ç½®é¡µé¢ hold
     static void holdPageThen(uint32_t durationMs, DisplayPage nextPage, UIContext nextContext);
 };
 
