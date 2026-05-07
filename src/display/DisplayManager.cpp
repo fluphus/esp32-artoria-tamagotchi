@@ -1,4 +1,4 @@
-// src/display/DisplayManager.cpp
+﻿// src/display/DisplayManager.cpp
 // 显示管理器实现 - UI 状态机
 // show*() 只更新 DisplayModel + 标记 dirty
 // update() 管理动画/页面超时, renderIfDirty() 委托 DisplayRenderer 绘制
@@ -250,23 +250,32 @@ void DisplayManager::updatePetSnapshot(const PetState& pet) {
 // --- 系统 ---
 
 void DisplayManager::showBootScreen() {
+    _model.bootMessage[0] = '\0';
     switchPage(PAGE_BOOT);
 }
 
 void DisplayManager::showSaveLoaded() {
-    showToast("Save loaded", 1500);
+    strncpy(_model.bootMessage, "Save loaded", sizeof(_model.bootMessage) - 1);
+    _model.bootMessage[sizeof(_model.bootMessage) - 1] = '\0';
+    markDirty();
 }
 
 void DisplayManager::showSaveCorruptedNewGame() {
-    showToast("Save corrupted, new game", 2000);
+    strncpy(_model.bootMessage, "Save corrupted!", sizeof(_model.bootMessage) - 1);
+    _model.bootMessage[sizeof(_model.bootMessage) - 1] = '\0';
+    markDirty();
 }
 
 void DisplayManager::showNewGame() {
-    showToast("New game", 1500);
+    strncpy(_model.bootMessage, "New game", sizeof(_model.bootMessage) - 1);
+    _model.bootMessage[sizeof(_model.bootMessage) - 1] = '\0';
+    markDirty();
 }
 
 void DisplayManager::showSystemReady() {
-    // Boot 页面会自动切到 idle
+    // Boot page auto-transitions to idle via update() timeout.
+    // Show a brief toast so user sees the boot message was acknowledged.
+    showToast("Ready", 1000);
 }
 
 // --- 状态面板 ---
@@ -531,7 +540,7 @@ void DisplayManager::showDestroyCancelled() {
 // --- 存档 ---
 
 void DisplayManager::showAutoSave() {
-    setAnimation(ANIM_SAVE, ANIM_DURATION_SAVE, UI_IDLE);
+    showToast("Autosaved", 800);
 }
 
 // --- Toast ---
