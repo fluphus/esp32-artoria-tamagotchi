@@ -131,7 +131,7 @@ static UICallbacks gameCallbacks = {
             case UI_IDLE:
                 // 动画播放中不切页面, 等动画结束后再切
                 // Page hold 期间也不切页面, 等 hold 结束后自动切
-                if (!DisplayManager::isAnimationPlaying() && !DisplayManager::isPageBlockingInput())
+                if (!DisplayManager::isAnimationPlaying() && !DisplayManager::isPageHoldActive())
                     DisplayManager::switchPage(PAGE_IDLE);
                 break;
             case UI_STATUS:

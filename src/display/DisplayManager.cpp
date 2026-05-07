@@ -240,6 +240,10 @@ bool DisplayManager::isPageBlockingInput() {
     return false;
 }
 
+bool DisplayManager::isPageHoldActive() {
+    return _pageHoldActive;
+}
+
 // ============================================================================
 //  内部辅助
 // ============================================================================

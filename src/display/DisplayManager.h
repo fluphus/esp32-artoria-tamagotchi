@@ -75,6 +75,7 @@ public:
     static AnimState getCurrentAnimation();
     static bool isAnimationPlaying();
     static bool isPageBlockingInput();
+    static bool isPageHoldActive();
 
     // ==== 数据更新接口 (show* 函数只更新 model + dirty) ====
 
