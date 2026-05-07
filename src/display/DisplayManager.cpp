@@ -23,6 +23,12 @@ bool         DisplayManager::_dirty             = true;
 DisplayModel DisplayManager::_model;
 uint32_t     DisplayManager::_lastRenderMs      = 0;
 
+// Page hold 机制
+bool         DisplayManager::_pageHoldActive    = false;
+uint32_t     DisplayManager::_pageHoldUntilMs   = 0;
+DisplayPage  DisplayManager::_pageAfterHold     = PAGE_IDLE;
+UIContext    DisplayManager::_contextAfterHold  = UI_IDLE;
+
 // ============================================================================
 //  生命周期
 // ============================================================================
@@ -34,6 +40,10 @@ void DisplayManager::init() {
     _pageEnteredMs = millis();
     _dirty = true;
     _lastRenderMs = 0;
+    _pageHoldActive = false;
+    _pageHoldUntilMs = 0;
+    _pageAfterHold = PAGE_IDLE;
+    _contextAfterHold = UI_IDLE;
 
     DisplayRenderer::init();
     markDirty();
@@ -59,7 +69,7 @@ void DisplayManager::update(uint32_t nowMs) {
                 menuController.onAnimationComplete(ctx);
             } else {
                 // 动画完成 context 为 UI_IDLE 且不需要通知 MenuController 时,
-                // 直接切回 idle 页面 (如 ANIM_DESTROY, ANIM_COMBO, ANIM_DAY_END 等)
+                // 直接切回 idle 页面 (如 ANIM_DESTROY, ANIM_DAY_END 等)
                 switchPage(PAGE_IDLE);
             }
         } else {
@@ -72,6 +82,14 @@ void DisplayManager::update(uint32_t nowMs) {
         }
     }
 
+    // --- Page hold 超时检测 ---
+    if (_pageHoldActive && nowMs >= _pageHoldUntilMs) {
+        _pageHoldActive = false;
+        DisplayPage nextPage = _pageAfterHold;
+        // UIContext nextCtx = _contextAfterHold; // 不主动切 context, 由 switchPage 触发
+        switchPage(nextPage);
+    }
+
     // --- 页面自动切换 ---
     switch (_currentPage) {
         case PAGE_BOOT:
@@ -81,11 +99,10 @@ void DisplayManager::update(uint32_t nowMs) {
             break;
 
         case PAGE_FEED_RESULT:
-            // 至少停留 PAGE_DURATION_FEED_RESULT
-            if (_currentAnim == ANIM_NONE &&
+            // 至少停留 PAGE_DURATION_FEED_RESULT (由 hold 机制管理)
+            // 如果没有 hold active 且没有动画, 说明 hold 已结束或未设置
+            if (!_pageHoldActive && _currentAnim == ANIM_NONE &&
                 (nowMs - _pageEnteredMs >= PAGE_DURATION_FEED_RESULT)) {
-                // combo 路径: ANIM_COMBO 动画结束后会由 onAnimationComplete 切到 SPECIAL_FOOD
-                // 非 combo 路径: 回 idle
                 switchPage(PAGE_IDLE);
             }
             break;
@@ -161,6 +178,10 @@ void DisplayManager::renderIfDirty() {
 // ============================================================================
 
 void DisplayManager::switchPage(DisplayPage page) {
+    // 如果当前页面正在 hold 中, 不允许外部切走 (除非切到同一页面)
+    if (_pageHoldActive && page != _currentPage) {
+        return;
+    }
     if (_currentPage == page) return;
     _currentPage = page;
     _pageEnteredMs = millis();
@@ -198,6 +219,9 @@ bool DisplayManager::isPageBlockingInput() {
     if (_currentAnim != ANIM_NONE && _currentAnim != ANIM_IDLE) return true;
     if (_currentPage == PAGE_BOOT) return true;
     if (_currentPage == PAGE_EVOLUTION) return true;
+    if (_currentPage == PAGE_DAY_END) return true;
+    // Page hold 期间阻塞输入 (FeedResult hold, SpecialFood confirm hold)
+    if (_pageHoldActive) return true;
     return false;
 }
 
@@ -223,6 +247,13 @@ uint32_t DisplayManager::getAnimDuration(AnimState anim) {
         case ANIM_SAVE:                 return ANIM_DURATION_SAVE;
         default:                        return 0;
     }
+}
+
+void DisplayManager::holdPageThen(uint32_t durationMs, DisplayPage nextPage, UIContext nextContext) {
+    _pageHoldActive = true;
+    _pageHoldUntilMs = millis() + durationMs;
+    _pageAfterHold = nextPage;
+    _contextAfterHold = nextContext;
 }
 
 // ============================================================================
@@ -330,6 +361,12 @@ void DisplayManager::showFeedResult(const FeedOutcome& outcome, int16_t srAfter)
     _model.feedOutcome = outcome;
     _model.feedSrAfter = srAfter;
     switchPage(PAGE_FEED_RESULT);
+
+    // 非 combo 投喂: 设置 hold, 确保结果页至少停留 PAGE_DURATION_FEED_RESULT
+    if (!outcome.combo_triggered) {
+        holdPageThen(PAGE_DURATION_FEED_RESULT, PAGE_IDLE, UI_IDLE);
+    }
+    // combo 路径: 由 ANIM_COMBO 动画管理, 不设 hold
 }
 
 void DisplayManager::showFeedComboTriggered(ComboType combo) {
@@ -366,6 +403,9 @@ void DisplayManager::showSpecialFoodConfirm(uint8_t id, const FeedOutcome& outco
 
     if (outcome.mapo_tofu_triggered) {
         setAnimation(ANIM_MAPO_TOFU, ANIM_DURATION_MAPO_TOFU, UI_IDLE);
+    } else {
+        // 非 mapo: 至少显示确认 1 秒
+        holdPageThen(1000, PAGE_IDLE, UI_IDLE);
     }
 }
 

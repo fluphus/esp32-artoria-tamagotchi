@@ -165,11 +165,20 @@ private:
     static DisplayModel _model;
     static uint32_t     _lastRenderMs;
 
+    // --- Page hold 机制 ---
+    static bool         _pageHoldActive;        // 是否正在 hold
+    static uint32_t     _pageHoldUntilMs;       // hold 结束时间
+    static DisplayPage  _pageAfterHold;         // hold 结束后切换到的页面
+    static UIContext    _contextAfterHold;      // hold 结束后切换到的上下文
+
     // 内部: 标记脏
     static void markDirty();
 
     // 内部: 获取动画时长
     static uint32_t getAnimDuration(AnimState anim);
+
+    // 内部: 设置页面 hold
+    static void holdPageThen(uint32_t durationMs, DisplayPage nextPage, UIContext nextContext);
 };
 
 #endif // DISPLAY_MANAGER_H

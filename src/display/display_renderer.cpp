@@ -256,7 +256,7 @@ void DisplayRenderer::drawIdle(const DisplayModel& model) {
     // Key hints
     tft.setTextColor(COLOR_TEXT_DIM, COLOR_BG);
     tft.setTextDatum(TR_DATUM);
-    tft.drawString("L:Feed M:Poke R:Status", SCREEN_WIDTH - 2, IDLE_HINT_Y);
+    tft.drawString("L:Feed M:Status R:Poke", SCREEN_WIDTH - 2, IDLE_HINT_Y);
     tft.setTextDatum(TL_DATUM);
 }
 
@@ -305,7 +305,7 @@ void DisplayRenderer::drawStatus(const DisplayModel& model) {
     // Hint at bottom
     tft.setTextColor(COLOR_TEXT_DIM, COLOR_BG);
     tft.setTextDatum(BC_DATUM);
-    tft.drawString("[R] Close", SCREEN_WIDTH / 2, SCREEN_HEIGHT - 2);
+    tft.drawString("[M] Close", SCREEN_WIDTH / 2, SCREEN_HEIGHT - 2);
     tft.setTextDatum(TL_DATUM);
 }
 
@@ -406,7 +406,7 @@ void DisplayRenderer::drawFeedPick(const DisplayModel& model) {
     // Hints
     tft.setTextColor(COLOR_TEXT_DIM, COLOR_BG);
     tft.setTextDatum(BC_DATUM);
-    tft.drawString("L/R:Move M:Pick  Hold-M:Go", SCREEN_WIDTH / 2, SCREEN_HEIGHT - 2);
+    tft.drawString("L/R:Move M:Pick (3=Go)", SCREEN_WIDTH / 2, SCREEN_HEIGHT - 2);
     tft.setTextDatum(TL_DATUM);
 }
 
