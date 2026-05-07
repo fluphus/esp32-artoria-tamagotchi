@@ -146,6 +146,7 @@ struct SaveHeader {
     uint16_t data_size;
     uint16_t checksum;
     uint32_t sequence;      // 单调递增序号, 用于判断新旧
+    uint32_t save_time;     // 存档时的 unix timestamp (用于离线补偿)
 };
 
 #endif // GAME_STATE_H

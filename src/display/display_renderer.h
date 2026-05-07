@@ -34,6 +34,7 @@ public:
     static void drawEvolution(const DisplayModel& model);
     static void drawDestroyConfirm(const DisplayModel& model);
     static void drawDayEnd(const DisplayModel& model);
+    static void drawWaitTimeSet(const DisplayModel& model);
     static void drawToast(const DisplayModel& model);
 
     // --- 辅助绘制 ---

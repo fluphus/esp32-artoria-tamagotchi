@@ -57,7 +57,7 @@ SaveResult SaveManager::init() {
     return SAVE_OK;
 }
 
-SaveResult SaveManager::save(const PetState& pet) {
+SaveResult SaveManager::save(const PetState& pet, uint32_t saveTime) {
     if (!_initialized) return SAVE_ERR_NVS_INIT;
 
     uint8_t targetSlot = getOldestSlot();
@@ -68,6 +68,7 @@ SaveResult SaveManager::save(const PetState& pet) {
     header.data_size = sizeof(PetState);
     header.checksum = calcChecksum((const uint8_t*)&pet, sizeof(PetState));
     header.sequence = _nextSequence;
+    header.save_time = saveTime;
 
     // 写入头
     size_t written = prefs.putBytes(slotHdrKey(targetSlot), &header, sizeof(SaveHeader));
@@ -126,7 +127,12 @@ SaveResult SaveManager::load(PetState& pet) {
         Serial.printf("[Save] Trying slot %d (seq=%lu)...\n", slots[i].slot, slots[i].sequence);
         SaveResult r = loadSlot(slots[i].slot, pet);
         if (r == SAVE_OK) {
-            Serial.printf("[Save] Loaded from slot %d\n", slots[i].slot);
+            // 读取该槽的 save_time
+            SaveHeader hdr;
+            if (readSlotHeader(slots[i].slot, hdr)) {
+                _loadedSaveTime = hdr.save_time;
+            }
+            Serial.printf("[Save] Loaded from slot %d (save_time=%lu)\n", slots[i].slot, _loadedSaveTime);
             return SAVE_OK;
         }
         Serial.printf("[Save] Slot %d failed (err=%d), trying next...\n", slots[i].slot, r);

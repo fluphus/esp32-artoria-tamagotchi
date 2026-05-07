@@ -131,6 +131,12 @@ void DisplayRenderer::drawDayEnd(const DisplayModel& model) {
     Serial.printf("[Display]   Day %d complete.\n", model.dayEnd.dayNumber);
 }
 
+void DisplayRenderer::drawWaitTimeSet(const DisplayModel& model) {
+    Serial.println("[Display] --- WAITING FOR TIME ---");
+    Serial.println("[Display]   Please set time via serial:");
+    Serial.println("[Display]   SET_TIME <unix_timestamp>");
+}
+
 void DisplayRenderer::drawToast(const DisplayModel& model) {
     if (model.toast[0] != '\0') {
         Serial.printf("[Display] TOAST: %s\n", model.toast);
@@ -767,6 +773,24 @@ void DisplayRenderer::drawProgressBar(int16_t x, int16_t y, int16_t w, int16_t h
 void DisplayRenderer::drawTextCentered(int16_t y, const char* text) {
     tft.setTextDatum(TC_DATUM);
     tft.drawString(text, SCREEN_WIDTH / 2, y);
+    tft.setTextDatum(TL_DATUM);
+}
+
+void DisplayRenderer::drawWaitTimeSet(const DisplayModel& model) {
+    tft.fillScreen(COLOR_BG);
+    tft.setTextSize(1);
+    tft.setTextDatum(TC_DATUM);
+
+    tft.setTextColor(COLOR_WARN, COLOR_BG);
+    tft.drawString("SET TIME", SCREEN_WIDTH / 2, 30);
+
+    tft.setTextColor(COLOR_TEXT, COLOR_BG);
+    tft.drawString("Send via serial:", SCREEN_WIDTH / 2, 55);
+    tft.drawString("SET_TIME <epoch>", SCREEN_WIDTH / 2, 70);
+
+    tft.setTextColor(COLOR_TEXT_DIM, COLOR_BG);
+    tft.drawString("Waiting...", SCREEN_WIDTH / 2, 100);
+
     tft.setTextDatum(TL_DATUM);
 }
 

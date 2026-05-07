@@ -58,6 +58,11 @@ public:
     uint32_t elapsedSince(uint32_t pastTimestamp);
     uint32_t daysBetween(uint32_t t1, uint32_t t2);
 
+    // unix timestamp -> TimeInfo 转换 (公开供外部使用)
+    TimeInfo epochToTimeInfo(uint32_t epoch);
+    uint32_t timeInfoToEpoch(uint16_t year, uint8_t month, uint8_t day,
+                             uint8_t hour, uint8_t minute, uint8_t second);
+
 private:
     uint32_t _simulated_epoch = 0;      // 模拟的 unix 时间起点
     uint32_t _sim_start_millis = 0;     // 模拟开始时的 millis()
@@ -65,11 +70,6 @@ private:
 
     uint8_t _last_minute = 255;         // 上次检测的分钟
     uint8_t _last_day = 255;            // 上次检测的日
-
-    // unix timestamp -> TimeInfo 转换
-    TimeInfo epochToTimeInfo(uint32_t epoch);
-    uint32_t timeInfoToEpoch(uint16_t year, uint8_t month, uint8_t day,
-                             uint8_t hour, uint8_t minute, uint8_t second);
 };
 
 // 全局单例

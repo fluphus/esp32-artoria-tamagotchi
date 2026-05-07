@@ -178,6 +178,9 @@ void DisplayManager::renderIfDirty() {
         case PAGE_DAY_END:
             DisplayRenderer::drawDayEnd(_model);
             break;
+        case PAGE_WAIT_TIME_SET:
+            DisplayRenderer::drawWaitTimeSet(_model);
+            break;
         default:
             break;
     }
@@ -235,6 +238,7 @@ bool DisplayManager::isPageBlockingInput() {
     if (_currentPage == PAGE_BOOT) return true;
     if (_currentPage == PAGE_EVOLUTION) return true;
     if (_currentPage == PAGE_DAY_END) return true;
+    if (_currentPage == PAGE_WAIT_TIME_SET) return true;
     // Page hold 期间阻塞输入 (FeedResult hold, SpecialFood confirm hold)
     if (_pageHoldActive) return true;
     return false;
@@ -587,6 +591,7 @@ void DisplayManager::showDestroyConfirm(uint8_t cursor) {
 
 void DisplayManager::showDestroyCursorMove(uint8_t cursor) {
     _model.destroyCursor = cursor;
+    _lastRenderMs = 0;  // bypass frame-rate limiter for immediate input feedback
     markDirty();
 }
 
@@ -608,6 +613,12 @@ void DisplayManager::showDestroyCancelled() {
 
 void DisplayManager::showAutoSave() {
     showToast("Autosaved", 800);
+}
+
+// --- 等待时间设置 ---
+
+void DisplayManager::showWaitTimeSet() {
+    switchPage(PAGE_WAIT_TIME_SET);
 }
 
 // --- Toast ---

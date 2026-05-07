@@ -35,8 +35,8 @@ public:
     // 初始化 NVS, 扫描两个槽确定当前状态
     SaveResult init();
 
-    // 存档 (写入最旧的槽)
-    SaveResult save(const PetState& pet);
+    // 存档 (写入最旧的槽), saveTime = 当前 unix timestamp
+    SaveResult save(const PetState& pet, uint32_t saveTime);
 
     // 读档 (按新到旧顺序尝试)
     SaveResult load(PetState& pet);
@@ -53,10 +53,14 @@ public:
     // 更新自动存档计时
     void markSaved(uint32_t currentTime);
 
+    // 获取最近一次成功 load 的存档时间 (0 = 无存档/新游戏)
+    uint32_t getLastSaveTime() const { return _loadedSaveTime; }
+
 private:
     bool _initialized = false;
     uint32_t _lastSaveTime = 0;
     uint32_t _nextSequence = 1;     // 下一个写入的序号
+    uint32_t _loadedSaveTime = 0;   // load 时读取的存档时间戳
 
     // 每个槽的 NVS key
     static const char* slotHdrKey(uint8_t slot);

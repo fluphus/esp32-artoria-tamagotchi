@@ -21,6 +21,10 @@ static PetState pet;
 static char cmdBuf[64];
 static uint8_t cmdLen = 0;
 
+// ????: ????????
+static bool waitingForTimeSet = false;
+static uint32_t loadedSaveTime = 0;  // ?????????
+
 // ============================================================================
 //  UICallbacks implementation (updates DisplayManager)
 // ============================================================================
@@ -126,11 +130,11 @@ static UICallbacks gameCallbacks = {
     // onContextChange
     [](UIContext from, UIContext to) {
         Serial.printf("[MC] Context: %s -> %s\n", UI_CONTEXT_NAMES[from], UI_CONTEXT_NAMES[to]);
-        // 同步 DisplayPage 与 UIContext
+        // 同步 DisplayPage �?UIContext
         switch (to) {
             case UI_IDLE:
-                // 动画播放中不切页面, 等动画结束后再切
-                // Page hold 期间也不切页面, 等 hold 结束后自动切
+                // 动画播放中不切页�? 等动画结束后再切
+                // Page hold 期间也不切页�? �?hold 结束后自动切
                 if (!DisplayManager::isAnimationPlaying() && !DisplayManager::isPageHoldActive())
                     DisplayManager::switchPage(PAGE_IDLE);
                 break;
@@ -147,7 +151,7 @@ static UICallbacks gameCallbacks = {
                 DisplayManager::switchPage(PAGE_DESTROY_CONFIRM);
                 break;
             default:
-                // UI_FEED_DRAW, UI_POKE_ANIM, UI_EVOLUTION 由具体 show*() 负责切页
+                // UI_FEED_DRAW, UI_POKE_ANIM, UI_EVOLUTION 由具�?show*() 负责切页
                 break;
         }
     }
@@ -227,6 +231,7 @@ void printHelp() {
     Serial.println("  save / load / erase");
     Serial.println("  reset          Destroy & reset");
     Serial.println("  stime Y M D H m");
+    Serial.println("  SET_TIME <epoch>  Set system time (unix timestamp)");
     Serial.println("  hp/sr/age <val>  Debug set");
     Serial.println("  grad           Force graduation");
     Serial.println("  mapo           Debug +1 mapo count");
@@ -260,7 +265,7 @@ void doDayEnd() {
         DisplayManager::showDayEndTerminalState();
         feedingSystem.resetDaily(pet, timeManager.getDay());
         pet.age_days++;
-        saveManager.save(pet);
+        saveManager.save(pet, timeManager.now());
         saveManager.markSaved(now);
         return;
     }
@@ -290,7 +295,7 @@ void doDayEnd() {
         Serial.printf("[DayEnd] Graduation: %s\n", EVO_EVENT_NAMES[evo.event]);
         DisplayManager::showChildGraduation(evo, pet.alignment);
     } else {
-        // 只有非毕业情况才检查成年进化
+        // 只有非毕业情况才检查成年进�?
         if (evo.event == EVO_NONE && pet.stage == STAGE_ADULT)
             evo = evolutionSystem.check(pet, now);
         if (evo.event != EVO_NONE) {
@@ -303,7 +308,7 @@ void doDayEnd() {
     Serial.printf("[DayEnd] Day %d done.\n", pet.age_days);
     DisplayManager::showDayEndComplete(pet.age_days);
 
-    saveManager.save(pet);
+    saveManager.save(pet, timeManager.now());
     saveManager.markSaved(now);
 }
 
@@ -313,15 +318,96 @@ void doReset() {
     DisplayManager::showDestroyExecuted(destroyedForm);
     evolutionSystem.destroy(pet, now);
     feedingSystem.resetDaily(pet, timeManager.getDay());
-    SaveResult r = saveManager.save(pet);
+    SaveResult r = saveManager.save(pet, timeManager.now());
     if (r == SAVE_OK) saveManager.markSaved(now);
-    // 不再立即调用 showDestroyReset(), 动画结束后 DisplayManager::update() 会自动切回 PAGE_IDLE
+    printStatus();
+}
+
+// ============================================================================
+//  ?????? - ???????????
+// ============================================================================
+
+void skipTime(uint32_t offlineSeconds) {
+    if (offlineSeconds < 60) {
+        Serial.println("[Offline] Less than 1 minute offline, no compensation needed.");
+        return;
+    }
+
+    uint32_t offlineDays = offlineSeconds / 86400;
+    uint32_t remainingMinutes = (offlineSeconds % 86400) / 60;
+
+    Serial.printf("[Offline] Compensating: %lu days + %lu minutes\n", offlineDays, remainingMinutes);
+
+    // ???? (? d ????)
+    for (uint32_t i = 0; i < offlineDays; i++) {
+        doDayEnd();
+        timeManager.advanceDays(1);
+        timeManager.checkNewDay();  // ?? newDay ??
+    }
+
+    // ????????????
+    if (remainingMinutes > 0) {
+        timeManager.advanceMinutes(remainingMinutes);
+        uint32_t now = timeManager.now();
+        IdleTickResult iR = seriousnessSystem.onIdleBatch(pet, remainingMinutes, now);
+        if (iR.tier_changed) {
+            Serial.printf("[Offline] Tier: %s -> %s\n", TIER_NAMES[iR.tier_before], TIER_NAMES[iR.tier_after]);
+            EvolutionResult eR = evolutionSystem.check(pet, now);
+            if (eR.event != EVO_NONE) {
+                Serial.printf("[Offline] Evo: %s -> %s\n", FORM_NAMES[eR.form_before], FORM_NAMES[eR.form_after]);
+            }
+        }
+    }
+
+    Serial.printf("[Offline] Compensation complete. Age: Day %d\n", pet.age_days);
+    saveManager.save(pet, timeManager.now());
+    saveManager.markSaved(timeManager.now());
     printStatus();
 }
 
 void processCommand(const char* cmd) {
     while (*cmd == ' ') cmd++;
     if (strlen(cmd) == 0) return;
+
+    // SET_TIME ??: ?????? (?????, ???????)
+    if (strncmp(cmd, "SET_TIME ", 9) == 0) {
+        uint32_t timestamp = strtoul(cmd + 9, nullptr, 10);
+        if (timestamp < 1000000000UL) {
+            Serial.println("[Time] Invalid timestamp (too small). Use unix epoch seconds.");
+            return;
+        }
+        TimeInfo t = timeManager.epochToTimeInfo(timestamp);
+        timeManager.setSimulatedTime(t.year, t.month, t.day, t.hour, t.minute);
+        // ??????
+        Serial.printf("[Time] System time set to: %04d-%02d-%02d %02d:%02d:%02d\n",
+                      t.year, t.month, t.day, t.hour, t.minute, t.second);
+
+        if (waitingForTimeSet) {
+            waitingForTimeSet = false;
+            // ?????????
+            if (loadedSaveTime > 0 && timestamp > loadedSaveTime) {
+                uint32_t offlineDuration = timestamp - loadedSaveTime;
+                Serial.printf("[Offline] Duration: %lu seconds (%.1f days)\n",
+                              offlineDuration, (float)offlineDuration / 86400.0f);
+                skipTime(offlineDuration);
+            } else {
+                Serial.println("[Offline] No compensation needed (no save time or time went backwards).");
+            }
+            // ??????
+            DisplayManager::showSystemReady();
+            Serial.println("[Main] Time set, entering normal operation.");
+            printStatus();
+        }
+        return;
+    }
+
+    // ????????, ??? SET_TIME ? s/h ??
+    if (waitingForTimeSet) {
+        if (strcmp(cmd, "s") == 0) { printStatus(); return; }
+        if (strcmp(cmd, "h") == 0) { printHelp(); return; }
+        Serial.println("[Main] Waiting for SET_TIME <unix_timestamp>. Other commands blocked.");
+        return;
+    }
 
     if (strcmp(cmd, "s") == 0) { printStatus(); return; }
     if (strcmp(cmd, "h") == 0) { printHelp(); return; }
@@ -344,7 +430,7 @@ void processCommand(const char* cmd) {
         return;
     }
     if (strcmp(cmd, "save") == 0) {
-        SaveResult r = saveManager.save(pet);
+        SaveResult r = saveManager.save(pet, timeManager.now());
         if (r == SAVE_OK) {
             saveManager.markSaved(timeManager.now());
             Serial.println("[Save] OK");
@@ -394,7 +480,7 @@ void processCommand(const char* cmd) {
             EvolutionResult eR = evolutionSystem.checkMapoCurse(pet);
             if (eR.event == EVO_BLACK_RHONGOMYNIAD) {
                 DisplayManager::showEvolutionEvent(eR, pet.seriousness);
-                saveManager.save(pet);
+                saveManager.save(pet, timeManager.now());
                 saveManager.markSaved(timeManager.now());
             }
         }
@@ -550,6 +636,13 @@ void setup() {
         if (saveManager.load(pet) == SAVE_OK) {
             Serial.println("[Main] Save loaded");
             DisplayManager::showSaveLoaded();
+            loadedSaveTime = saveManager.getLastSaveTime();
+            if (loadedSaveTime > 0) {
+                // ???????, ??????????
+                waitingForTimeSet = true;
+                Serial.printf("[Main] Last save time: %lu\n", loadedSaveTime);
+                Serial.println("[Main] *** Please set current time via: SET_TIME <unix_timestamp> ***");
+            }
         } else {
             Serial.println("[Main] Save corrupted, new game");
             DisplayManager::showSaveCorruptedNewGame();
@@ -567,13 +660,25 @@ void setup() {
     printHelp();
     printStatus();
 
-    DisplayManager::showSystemReady();
-    Serial.println("\nReady.\n> ");
+    if (waitingForTimeSet) {
+        DisplayManager::showWaitTimeSet();
+        Serial.println("\n[Main] Waiting for SET_TIME command...\n> ");
+    } else {
+        DisplayManager::showSystemReady();
+        Serial.println("\nReady.\n> ");
+    }
 }
 
 void loop() {
-    // 1. Serial commands
+    // 1. Serial commands (always active, even during time-set wait)
     readSerialCommand();
+
+    // ????????, ????????????
+    if (waitingForTimeSet) {
+        DisplayManager::update(millis());
+        delay(10);
+        return;
+    }
 
     // 2. MenuController (processes button input -> game actions)
     menuController.update();
@@ -606,7 +711,7 @@ void loop() {
 
     // Auto-save
     if (saveManager.shouldAutoSave(now)) {
-        SaveResult r = saveManager.save(pet);
+        SaveResult r = saveManager.save(pet, timeManager.now());
         if (r == SAVE_OK) {
             saveManager.markSaved(now);
             DisplayManager::showAutoSave();

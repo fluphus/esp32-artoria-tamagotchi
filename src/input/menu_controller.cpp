@@ -223,7 +223,7 @@ void MenuController::handleSpecialFood(GameInput action) {
                     }
                 }
 
-                saveManager.save(*_pet);
+                saveManager.save(*_pet, timeManager.now());
                 saveManager.markSaved(timeManager.now());
                 switchContext(UI_IDLE);
             }
@@ -374,7 +374,7 @@ void MenuController::confirmFeed() {
     }
 
     // 存档
-    saveManager.save(*_pet);
+    saveManager.save(*_pet, timeManager.now());
     saveManager.markSaved(now);
 }
 
@@ -430,7 +430,7 @@ void MenuController::executeDestroy() {
     _combo_pending = false;
     _destroy.active = false;
 
-    saveManager.save(*_pet);
+    saveManager.save(*_pet, timeManager.now());
     saveManager.markSaved(now);
 
     safeCallback(_callbacks->onDestroyExecuted, destroyedForm);
