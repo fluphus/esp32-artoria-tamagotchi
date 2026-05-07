@@ -48,6 +48,9 @@ EvolutionResult EvolutionSystem::checkChildGraduation(PetState& pet) {
     if (pet.stage != STAGE_CHILD) return result;
     if (pet.age_days < CHILD_PERIOD_DAYS) return result;
 
+    // nobu ²»»á×ÔÈ»³É³¤
+    if (pet.is_nobu) return result;
+
     pet.stage = STAGE_ADULT;
 
     if (pet.health >= HEALTH_INITIAL) {
@@ -118,7 +121,12 @@ EvolutionResult EvolutionSystem::check(PetState& pet, uint32_t currentTime) {
     result.form_after = pet.form;
     result.tier = seriousnessSystem.getTier(pet.seriousness);
 
-    // ç»ˆæ€æ£€æŸ¥
+    // nobu Â·Ïß: ²»½øÐÐÕý³£½ø»¯¼ì²é
+    if (pet.is_nobu || pet.is_oda_nobunaga) {
+        return result;
+    }
+
+        // ÖÕÌ¬¼ì²é
     if (pet.is_rhongomyniad) {
         result.form_after = FORM_WHITE_LANCER_RHONGOMYNIAD;
         return result;
@@ -128,14 +136,14 @@ EvolutionResult EvolutionSystem::check(PetState& pet, uint32_t currentTime) {
         return result;
     }
 
-    // éº»å©†è±†è…è¯…å’’ä¼˜å…ˆæ£€æŸ¥
+    // ÂéÆÅ¶¹¸¯×çÖäÓÅÏÈ¼ì²é
     EvolutionResult mapoResult = checkMapoCurse(pet);
     if (mapoResult.event != EVO_NONE) return mapoResult;
 
-    // å¹¼å¹´æœŸä¸æ£€æŸ¥æˆä½“å½¢æ€
+    // Ó×ÄêÆÚ²»¼ì²é³ÉÌåÐÎÌ¬
     if (pet.stage != STAGE_ADULT) return result;
 
-    // ç™½çº¿ç‹®å­çŽ‹æ£€æŸ¥
+    // °×ÏßÊ¨×ÓÍõ¼ì²é
     if (pet.alignment == ALIGN_WHITE && pet.seriousness >= RHONGOMYNIAD_THRESHOLD) {
         if (pet.rhongo_timer_start > 0) {
             uint32_t elapsed = currentTime - pet.rhongo_timer_start;
@@ -152,7 +160,7 @@ EvolutionResult EvolutionSystem::check(PetState& pet, uint32_t currentTime) {
         }
     }
 
-    // ä¸¥è‚ƒå€¼åŒºé—´å½¢æ€åˆ‡æ¢
+    // ÑÏËàÖµÇø¼äÐÎÌ¬ÇÐ»»
     Form resolved = resolveAdultForm(pet);
     if (resolved != pet.form) {
         Form oldForm = pet.form;
@@ -173,4 +181,44 @@ void EvolutionSystem::destroy(PetState& pet, uint32_t currentTime) {
     Serial.printf("[Evolution] Destroying %s...\n", FORM_NAMES[pet.form]);
     pet.initNew(currentTime);
     Serial.println("[Evolution] Reset to Lily. New game.");
+}
+
+
+EvolutionResult EvolutionSystem::checkNobuMapo(PetState& pet) {
+    EvolutionResult result = {};
+    result.event = EVO_NONE;
+    result.form_before = pet.form;
+    result.form_after = pet.form;
+
+    if (!pet.is_nobu) return result;
+    if (pet.is_oda_nobunaga) return result;
+
+    // nobu µÄÂéÆÅ¶¹¸¯ÊÂ¼þ´¥·¢½ø»¯Îª Oda Nobunaga
+    if (pet.mapo_tofu_count >= 1) {
+        pet.is_nobu = false;
+        pet.is_oda_nobunaga = true;
+        pet.form = FORM_ODA_NOBUNAGA;
+        pet.stage = STAGE_ADULT;
+        pet.mapo_tofu_count = 1;  // Ëø¶¨Îª 1, ·ÀÖ¹´¥·¢ºÚÊ¨×ÓÍõ
+        result.event = EVO_NOBU_EVOLUTION;
+        result.form_after = FORM_ODA_NOBUNAGA;
+
+        Serial.println("[Evolution] ================================");
+        Serial.println("[Evolution] *** ODA NOBUNAGA ***");
+        Serial.println("[Evolution] nobu has evolved!");
+        Serial.println("[Evolution] Form locked. Mapo count locked at 1.");
+        Serial.println("[Evolution] ================================");
+    }
+
+    return result;
+}
+
+void EvolutionSystem::destroyToNobu(PetState& pet, uint32_t currentTime, uint16_t prevAgeDays) {
+    Serial.println("[Evolution] *** NOBU EASTER EGG ***");
+    pet.initNew(currentTime);
+    pet.form = FORM_NOBU;
+    pet.base_form = FORM_NOBU;
+    pet.is_nobu = true;
+    pet.stage = STAGE_CHILD;
+    Serial.printf("[Evolution] Reset to nobu (prev age: %d days)\n", prevAgeDays);
 }

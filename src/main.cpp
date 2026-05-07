@@ -9,6 +9,9 @@
 #include "pet/evolution.h"
 #include "input/menu_controller.h"
 #include "display/DisplayManager.h"
+#include "core/power_manager.h"
+#include <esp_sleep.h>
+#include <esp_random.h>
 
 // ============================================================================
 //  Serial input debug switch (set to 0 to disable serial button commands)
@@ -21,9 +24,9 @@ static PetState pet;
 static char cmdBuf[64];
 static uint8_t cmdLen = 0;
 
-// ç¦»çº¿è¡¥å¿: ç­‰å¾…ä¸²å£è®¾ç½®æ—¶é—´
+// ÀëÏß²¹³¥: µÈ´ı´®¿ÚÉèÖÃÊ±¼ä
 static bool waitingForTimeSet = false;
-static uint32_t loadedSaveTime = 0;  // å­˜æ¡£ä¸­è®°å½•çš„æ—¶é—´æˆ³
+static uint32_t loadedSaveTime = 0;  // ´æµµÖĞ¼ÇÂ¼µÄÊ±¼ä´Á
 
 // ============================================================================
 //  UICallbacks implementation (updates DisplayManager)
@@ -130,11 +133,11 @@ static UICallbacks gameCallbacks = {
     // onContextChange
     [](UIContext from, UIContext to) {
         Serial.printf("[MC] Context: %s -> %s\n", UI_CONTEXT_NAMES[from], UI_CONTEXT_NAMES[to]);
-        // åŒæ­¥ DisplayPage ï¿½?UIContext
+        // Í¬²½ DisplayPage ??UIContext
         switch (to) {
             case UI_IDLE:
-                // åŠ¨ç”»æ’­æ”¾ä¸­ä¸åˆ‡é¡µï¿½? ç­‰åŠ¨ç”»ç»“æŸåå†åˆ‡
-                // Page hold æœŸé—´ä¹Ÿä¸åˆ‡é¡µï¿½? ï¿½?hold ç»“æŸåè‡ªåŠ¨åˆ‡
+                // ¶¯»­²¥·ÅÖĞ²»ÇĞÒ³?? µÈ¶¯»­½áÊøºóÔÙÇĞ
+                // Page hold ÆÚ¼äÒ²²»ÇĞÒ³?? ??hold ½áÊøºó×Ô¶¯ÇĞ
                 if (!DisplayManager::isAnimationPlaying() && !DisplayManager::isPageHoldActive())
                     DisplayManager::switchPage(PAGE_IDLE);
                 break;
@@ -151,7 +154,7 @@ static UICallbacks gameCallbacks = {
                 DisplayManager::switchPage(PAGE_DESTROY_CONFIRM);
                 break;
             default:
-                // UI_FEED_DRAW, UI_POKE_ANIM, UI_EVOLUTION ç”±å…·ï¿½?show*() è´Ÿè´£åˆ‡é¡µ
+                // UI_FEED_DRAW, UI_POKE_ANIM, UI_EVOLUTION ÓÉ¾ß??show*() ¸ºÔğÇĞÒ³
                 break;
         }
     }
@@ -167,6 +170,17 @@ void printStatus() {
     uint32_t now = timeManager.now();
 
     Serial.println("========================================");
+    if (pet.is_nobu) {
+        Serial.printf("  Time:       %s\n", timeBuf);
+        Serial.println("  Name:       nobu");
+        Serial.println("  HP:         ?");
+        Serial.println("  SR:         ?");
+        Serial.println("  Age:        ?");
+        Serial.println("  Stage:      ?");
+        Serial.println("  Align:      ?");
+        Serial.println("========================================");
+        return;
+    }
     Serial.printf("  Time:       %s\n", timeBuf);
     Serial.printf("  Form:       %s\n", FORM_NAMES[pet.form]);
     Serial.printf("  Base:       %s\n", FORM_NAMES[pet.base_form]);
@@ -295,7 +309,7 @@ void doDayEnd() {
         Serial.printf("[DayEnd] Graduation: %s\n", EVO_EVENT_NAMES[evo.event]);
         DisplayManager::showChildGraduation(evo, pet.alignment);
     } else {
-        // åªæœ‰éæ¯•ä¸šæƒ…å†µæ‰æ£€æŸ¥æˆå¹´è¿›ï¿½?
+        // Ö»ÓĞ·Ç±ÏÒµÇé¿ö²Å¼ì²é³ÉÄê½ø??
         if (evo.event == EVO_NONE && pet.stage == STAGE_ADULT)
             evo = evolutionSystem.check(pet, now);
         if (evo.event != EVO_NONE) {
@@ -315,8 +329,27 @@ void doDayEnd() {
 void doReset() {
     uint32_t now = timeManager.now();
     Form destroyedForm = pet.form;
+    uint16_t prevAgeDays = pet.age_days;
     DisplayManager::showDestroyExecuted(destroyedForm);
-    evolutionSystem.destroy(pet, now);
+
+    // nobu ²Êµ°ÅĞ¶¨ (Óë executeDestroy Âß¼­Ò»ÖÂ)
+    uint32_t roll = esp_random() % 1000;
+    uint32_t threshold = 25;  // 2.5%
+    if (prevAgeDays >= 5) {   // µÚ6Ìì
+        threshold = 50;       // 5%
+    }
+
+    Serial.println("[Reset] ¿ªÊ¼¼ÆËã Nobu ´¥·¢¸ÅÂÊ...");
+    Serial.printf("[Reset] µ±Ç°Ëæ»úÊı: %lu, Ä¿±êãĞÖµ: %lu (Ğè roll < threshold ²Å´¥·¢)\n", roll, threshold);
+
+    if (roll < threshold) {
+        Serial.println("[Reset] ´¥·¢ÅĞ¶¨½á¹û: ³É¹¦! ½øÈë Nobu Â·Ïß");
+        evolutionSystem.destroyToNobu(pet, now, prevAgeDays);
+    } else {
+        Serial.println("[Reset] ´¥·¢ÅĞ¶¨½á¹û: Ê§°Ü, Õı³£ÖØÖÃÎª Lily");
+        evolutionSystem.destroy(pet, now);
+    }
+
     feedingSystem.resetDaily(pet, timeManager.getDay());
     SaveResult r = saveManager.save(pet, timeManager.now());
     if (r == SAVE_OK) saveManager.markSaved(now);
@@ -324,7 +357,7 @@ void doReset() {
 }
 
 // ============================================================================
-//  ç¦»çº¿æ—¶é—´è¡¥å¿ - æ¨¡æ‹Ÿç¦»çº¿æœŸé—´ç»è¿‡çš„å¤©æ•°
+//  ÀëÏßÊ±¼ä²¹³¥ - Ä£ÄâÀëÏßÆÚ¼ä¾­¹ıµÄÌìÊı
 // ============================================================================
 
 void skipTime(uint32_t offlineSeconds) {
@@ -338,14 +371,14 @@ void skipTime(uint32_t offlineSeconds) {
 
     Serial.printf("[Offline] Compensating: %lu days + %lu minutes\n", offlineDays, remainingMinutes);
 
-    // é€å¤©ç»“ç®— (ä¸ d å‘½ä»¤ç­‰æ•ˆ)
+    // ÖğÌì½áËã (Óë d ÃüÁîµÈĞ§)
     for (uint32_t i = 0; i < offlineDays; i++) {
         doDayEnd();
         timeManager.advanceDays(1);
-        timeManager.checkNewDay();  // æ¶ˆè€— newDay æ ‡è®°
+        timeManager.checkNewDay();  // ÏûºÄ newDay ±ê¼Ç
     }
 
-    // ç»“ç®—å‰©ä½™åˆ†é’Ÿçš„ä¸¥è‚ƒå€¼å¢é•¿
+    // ½áËãÊ£Óà·ÖÖÓµÄÑÏËàÖµÔö³¤
     if (remainingMinutes > 0) {
         timeManager.advanceMinutes(remainingMinutes);
         uint32_t now = timeManager.now();
@@ -369,7 +402,7 @@ void processCommand(const char* cmd) {
     while (*cmd == ' ') cmd++;
     if (strlen(cmd) == 0) return;
 
-    // SET_TIME å‘½ä»¤: è®¾ç½®ç³»ç»Ÿæ—¶é—´ (ç¦»çº¿è¡¥å¿ç”¨, ä»»ä½•çŠ¶æ€ä¸‹å¯ç”¨)
+    // SET_TIME ÃüÁî: ÉèÖÃÏµÍ³Ê±¼ä (ÀëÏß²¹³¥ÓÃ, ÈÎºÎ×´Ì¬ÏÂ¿ÉÓÃ)
     if (strncmp(cmd, "SET_TIME ", 9) == 0) {
         uint32_t timestamp = strtoul(cmd + 9, nullptr, 10);
         if (timestamp < 1000000000UL) {
@@ -378,13 +411,13 @@ void processCommand(const char* cmd) {
         }
         TimeInfo t = timeManager.epochToTimeInfo(timestamp);
         timeManager.setSimulatedTime(t.year, t.month, t.day, t.hour, t.minute);
-        // è¡¥å¿ç§’æ•°ç²¾åº¦
+        // ²¹³¥ÃëÊı¾«¶È
         Serial.printf("[Time] System time set to: %04d-%02d-%02d %02d:%02d:%02d\n",
                       t.year, t.month, t.day, t.hour, t.minute, t.second);
 
         if (waitingForTimeSet) {
             waitingForTimeSet = false;
-            // è®¡ç®—ç¦»çº¿æ—¶é•¿å¹¶è¡¥å¿
+            // ¼ÆËãÀëÏßÊ±³¤²¢²¹³¥
             if (loadedSaveTime > 0 && timestamp > loadedSaveTime) {
                 uint32_t offlineDuration = timestamp - loadedSaveTime;
                 Serial.printf("[Offline] Duration: %lu seconds (%.1f days)\n",
@@ -393,7 +426,7 @@ void processCommand(const char* cmd) {
             } else {
                 Serial.println("[Offline] No compensation needed (no save time or time went backwards).");
             }
-            // è¿›å…¥æ­£å¸¸è¿è¡Œ
+            // ½øÈëÕı³£ÔËĞĞ
             DisplayManager::showSystemReady();
             Serial.println("[Main] Time set, entering normal operation.");
             printStatus();
@@ -401,7 +434,7 @@ void processCommand(const char* cmd) {
         return;
     }
 
-    // ç­‰å¾…æ—¶é—´è®¾ç½®æœŸé—´, åªå…è®¸ SET_TIME å’Œ s/h å‘½ä»¤
+    // µÈ´ıÊ±¼äÉèÖÃÆÚ¼ä, Ö»ÔÊĞí SET_TIME ºÍ s/h ÃüÁî
     if (waitingForTimeSet) {
         if (strcmp(cmd, "s") == 0) { printStatus(); return; }
         if (strcmp(cmd, "h") == 0) { printHelp(); return; }
@@ -459,6 +492,17 @@ void processCommand(const char* cmd) {
         return;
     }
     if (strcmp(cmd, "reset") == 0) { doReset(); return; }
+    if (strcmp(cmd, "FORCE_NOBU") == 0) {
+        uint32_t now = timeManager.now();
+        uint16_t prevAgeDays = pet.age_days;
+        evolutionSystem.destroyToNobu(pet, now, prevAgeDays);
+        feedingSystem.resetDaily(pet, timeManager.getDay());
+        saveManager.save(pet, timeManager.now());
+        saveManager.markSaved(now);
+        Serial.println("[Debug] ÒÑÇ¿ÖÆÇĞ»»Îª Nobu");
+        printStatus();
+        return;
+    }
     if (strcmp(cmd, "grad") == 0) {
         if (pet.stage != STAGE_CHILD) { Serial.println("[Debug] Already adult."); return; }
         pet.age_days = CHILD_PERIOD_DAYS;
@@ -555,6 +599,54 @@ void processCommand(const char* cmd) {
     }
 
     // ========================================================================
+    //  Power management commands
+    // ========================================================================
+    if (strncmp(cmd, "bright ", 7) == 0) {
+        int val = atoi(cmd + 7);
+        if (val >= 0 && val <= 15) {
+            powerManager.setBrightness((uint8_t)val);
+            powerManager.onUserActivity();
+        } else {
+            Serial.println("[Power] Usage: bright <0-15>");
+        }
+        return;
+    }
+    if (strncmp(cmd, "dim ", 4) == 0 && strncmp(cmd, "dim_t ", 6) != 0) {
+        int val = atoi(cmd + 4);
+        if (val >= 0 && val <= 15) {
+            powerManager.setDimBrightness((uint8_t)val);
+        } else {
+            Serial.println("[Power] Usage: dim <0-15>");
+        }
+        return;
+    }
+    if (strncmp(cmd, "dim_t ", 6) == 0) {
+        uint32_t val = strtoul(cmd + 6, nullptr, 10);
+        powerManager.setDimTimeout(val);
+        return;
+    }
+    if (strncmp(cmd, "off_t ", 6) == 0) {
+        uint32_t val = strtoul(cmd + 6, nullptr, 10);
+        powerManager.setOffTimeout(val);
+        return;
+    }
+    if (strcmp(cmd, "pwrsave") == 0) {
+        powerManager.saveConfig();
+        return;
+    }
+    if (strcmp(cmd, "pwrinfo") == 0) {
+        Serial.println("--- Power Config ---");
+        Serial.printf("  Brightness:    %d / 15\n", powerManager.getBrightness());
+        Serial.printf("  Dim brightness:%d / 15\n", powerManager.getDimBrightness());
+        Serial.printf("  Dim timeout:   %lu sec\n", powerManager.getDimTimeout());
+        Serial.printf("  Off timeout:   %lu sec\n", powerManager.getOffTimeout());
+        const char* stateNames[] = {"ACTIVE", "DIM", "OFF"};
+        Serial.printf("  State:         %s\n", stateNames[powerManager.getState()]);
+        Serial.println("--------------------");
+        return;
+    }
+
+    // ========================================================================
     //  Button simulation (serial debug, guarded by macro)
     // ========================================================================
 #if ENABLE_SERIAL_INPUT_DEBUG
@@ -630,6 +722,9 @@ void setup() {
     // Initialize display first
     DisplayManager::init();
 
+    // Initialize power manager
+    powerManager.init();
+
     timeManager.init();
     saveManager.init();
     if (saveManager.hasSave()) {
@@ -638,7 +733,7 @@ void setup() {
             DisplayManager::showSaveLoaded();
             loadedSaveTime = saveManager.getLastSaveTime();
             if (loadedSaveTime > 0) {
-                // æœ‰å­˜æ¡£æ—¶é—´è®°å½•, è¿›å…¥ç­‰å¾…æ—¶é—´è®¾ç½®çŠ¶æ€
+                // ÓĞ´æµµÊ±¼ä¼ÇÂ¼, ½øÈëµÈ´ıÊ±¼äÉèÖÃ×´Ì¬
                 waitingForTimeSet = true;
                 Serial.printf("[Main] Last save time: %lu\n", loadedSaveTime);
                 Serial.println("[Main] *** Please set current time via: SET_TIME <unix_timestamp> ***");
@@ -669,18 +764,54 @@ void setup() {
     }
 }
 
+// ============================================================================
+//  Deep Sleep ½øÈë (±£³ÖÄÚ²¿¼ÆÊ±)
+// ============================================================================
+
+void enterDeepSleep() {
+    // ±£´æµ±Ç°×´Ì¬
+    SaveResult r = saveManager.save(pet, timeManager.now());
+    if (r == SAVE_OK) saveManager.markSaved(timeManager.now());
+    Serial.println("[Power] Entering deep sleep...");
+    Serial.flush();
+
+    // ÅäÖÃ»½ĞÑÔ´: ÈÎÒâ°´¼ü (GPIO) »½ĞÑ
+    uint64_t wakeupMask = 0;
+    wakeupMask |= (1ULL << PIN_BTN_L);
+    wakeupMask |= (1ULL << PIN_BTN_M);
+    wakeupMask |= (1ULL << PIN_BTN_R);
+    esp_sleep_enable_ext1_wakeup(wakeupMask, ESP_EXT1_WAKEUP_ANY_LOW);
+
+    // ÅäÖÃ¶¨Ê±Æ÷»½ĞÑ: Ã¿60Ãë»½ĞÑÒ»´ÎÒÔÎ¬³ÖÓÎÏ·¼ÆÊ±
+    esp_sleep_enable_timer_wakeup(60ULL * 1000000ULL);
+
+    // ½øÈë deep sleep
+    esp_deep_sleep_start();
+}
+
 void loop() {
     // 1. Serial commands (always active, even during time-set wait)
     readSerialCommand();
 
-    // ç­‰å¾…æ—¶é—´è®¾ç½®æœŸé—´, åªå¤„ç†ä¸²å£å‘½ä»¤å’Œæ˜¾ç¤ºæ›´æ–°
+    // µÈ´ıÊ±¼äÉèÖÃÆÚ¼ä, Ö»´¦Àí´®¿ÚÃüÁîºÍÏÔÊ¾¸üĞÂ
     if (waitingForTimeSet) {
+        powerManager.update(millis());
         DisplayManager::update(millis());
         delay(10);
         return;
     }
 
-    // 2. MenuController (processes button input -> game actions)
+    // 2. Power management update
+    powerManager.update(millis());
+
+    // ¼ì²éÊÇ·ñĞèÒª½øÈë deep sleep
+    if (powerManager.shouldEnterDeepSleep()) {
+        powerManager.clearSleepFlag();
+        enterDeepSleep();
+        return;
+    }
+
+    // 3. MenuController (processes button input -> game actions)
     menuController.update();
 
     // 3. Time-based game logic

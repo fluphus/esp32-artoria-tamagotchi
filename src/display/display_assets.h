@@ -1,4 +1,4 @@
-// src/display/display_assets.h
+﻿// src/display/display_assets.h
 // 资源引用声明 - 精灵图、动画帧
 // 实际资源数据由用户放入后编译, 此处仅声明接口
 
@@ -51,6 +51,7 @@ extern const AnimFrameSet ANIM_DESTROY_FRAMES;
 extern const AnimFrameSet ANIM_RHONGO_FRAMES;
 extern const AnimFrameSet ANIM_MAPO_FRAMES;
 extern const AnimFrameSet ANIM_COMBO_FRAMES;
+extern const AnimFrameSet ANIM_NOBU_FRAMES;
 
 // ============================================================================
 //  占位资源 (编译时始终存在)

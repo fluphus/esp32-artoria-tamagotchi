@@ -5,7 +5,7 @@
 
 #include <stdint.h>
 
-// --- çµåŸºå½¢æ€ ---
+// --- Áé»ùĞÎÌ¬ ---
 enum Form : uint8_t {
     FORM_LILY = 0,
     FORM_WHITE_SABER,
@@ -16,7 +16,9 @@ enum Form : uint8_t {
     FORM_BLACK_RIDER,
     FORM_WHITE_RULER,
     FORM_WHITE_LANCER_RHONGOMYNIAD,
-    FORM_BLACK_LANCER_RHONGOMYNIAD,     // æ–°å¢: éº»å©†è±†è…è¯…å’’ç»ˆæ€
+    FORM_BLACK_LANCER_RHONGOMYNIAD,     // ĞÂÔö: ÂéÆÅ¶¹¸¯×çÖäÖÕÌ¬
+    FORM_NOBU,                          // ²Êµ°: Ó×Ìå nobu
+    FORM_ODA_NOBUNAGA,                  // ²Êµ°: ³ÉÌå Oda Nobunaga
     FORM_COUNT
 };
 
@@ -30,10 +32,12 @@ inline const char* FORM_NAMES[FORM_COUNT] = {
     "Black Rider",
     "White Ruler",
     "Rhongomyniad",
-    "Black Rhongomyniad"                // æ–°å¢
+    "Black Rhongomyniad",                // ĞÂÔö
+    "nobu",                              // ²Êµ°Ó×Ìå
+    "Oda Nobunaga"                       // ²Êµ°³ÉÌå
 };
 
-// --- é˜µè¥ ---
+// --- ÕóÓª ---
 enum Alignment : uint8_t {
     ALIGN_UNDETERMINED = 0,
     ALIGN_WHITE,
@@ -46,7 +50,7 @@ inline const char* ALIGNMENT_NAMES[] = {
     "Black"
 };
 
-// --- ç”Ÿå‘½é˜¶æ®µ ---
+// --- ÉúÃü½×¶Î ---
 enum LifeStage : uint8_t {
     STAGE_CHILD = 0,
     STAGE_ADULT
@@ -57,18 +61,18 @@ inline const char* STAGE_NAMES[] = {
     "Adult"
 };
 
-// --- æ¯æ—¥æŠ•å–‚çŠ¶æ€ ---
+// --- Ã¿ÈÕÍ¶Î¹×´Ì¬ ---
 struct DailyFeedState {
     uint8_t date_day;
     uint8_t feed_count;
     uint32_t last_feed_time;
 
-    // æŒ‰æŠ•å–‚æ¬¡æ•°ç»Ÿè®¡ (ä¸æ˜¯é£Ÿç‰©ä»½æ•°)
-    // æ¯æ¬¡æŠ•å–‚æ ¹æ®3ä»½é£Ÿç‰©çš„å¤šæ•°å±æ€§åˆ¤å®š
-    uint8_t healthy_in_window;          // æ­£ç¡®çª—å£å†… å¥åº·æŠ•å–‚æ¬¡æ•°
-    uint8_t junk_in_window;             // æ­£ç¡®çª—å£å†… åƒåœ¾æŠ•å–‚æ¬¡æ•°
-    uint8_t healthy_outside_window;     // çª—å£å¤– å¥åº·æŠ•å–‚æ¬¡æ•°
-    uint8_t junk_outside_window;        // çª—å£å¤– åƒåœ¾æŠ•å–‚æ¬¡æ•°
+    // °´Í¶Î¹´ÎÊıÍ³¼Æ (²»ÊÇÊ³Îï·İÊı)
+    // Ã¿´ÎÍ¶Î¹¸ù¾İ3·İÊ³ÎïµÄ¶àÊıÊôĞÔÅĞ¶¨
+    uint8_t healthy_in_window;          // ÕıÈ·´°¿ÚÄÚ ½¡¿µÍ¶Î¹´ÎÊı
+    uint8_t junk_in_window;             // ÕıÈ·´°¿ÚÄÚ À¬»øÍ¶Î¹´ÎÊı
+    uint8_t healthy_outside_window;     // ´°¿ÚÍâ ½¡¿µÍ¶Î¹´ÎÊı
+    uint8_t junk_outside_window;        // ´°¿ÚÍâ À¬»øÍ¶Î¹´ÎÊı
 
     void reset(uint8_t newDay) {
         date_day = newDay;
@@ -82,7 +86,7 @@ struct DailyFeedState {
 };
 
 
-// --- å® ç‰©çŠ¶æ€ ---
+// --- ³èÎï×´Ì¬ ---
 struct PetState {
     Form form;
     Form base_form;
@@ -91,9 +95,9 @@ struct PetState {
 
     int16_t health;
     int16_t seriousness;
-    uint16_t idle_minute_remainder;     // ä¸¥è‚ƒå€¼å¢é•¿è®¡æ•°å™¨ä½™æ•°
-    uint32_t idle_paused_until;         // ä¸¥è‚ƒå€¼æš‚åœå¢é•¿æˆªæ­¢æ—¶é—´æˆ³, 0=æœªæš‚åœ
-    uint32_t last_poke_effect_time;     // ä¸Šæ¬¡pokeç”Ÿæ•ˆ(æ‰£å‡ä¸¥è‚ƒå€¼)çš„æ—¶é—´æˆ³, 0=ä»æœªç”Ÿæ•ˆ
+    uint16_t idle_minute_remainder;     // ÑÏËàÖµÔö³¤¼ÆÊıÆ÷ÓàÊı
+    uint32_t idle_paused_until;         // ÑÏËàÖµÔİÍ£Ôö³¤½ØÖ¹Ê±¼ä´Á, 0=Î´ÔİÍ£
+    uint32_t last_poke_effect_time;     // ÉÏ´ÎpokeÉúĞ§(¿Û¼õÑÏËàÖµ)µÄÊ±¼ä´Á, 0=´ÓÎ´ÉúĞ§
 
     uint32_t rhongo_timer_start;
     bool is_rhongomyniad;
@@ -101,10 +105,14 @@ struct PetState {
     Form white_fun_form;
     bool white_fun_form_locked;
 
-    // éº»å©†è±†è…è¯…å’’
-    uint8_t mapo_tofu_count;            // å½“å±€ç´¯è®¡è¿›é£Ÿæ¬¡æ•°
-    bool is_black_rhongomyniad;         // é»‘ç‹®å­ç‹ä¸å¯é€†æ ‡è®°
+    // ÂéÆÅ¶¹¸¯×çÖä
+    uint8_t mapo_tofu_count;            // µ±¾ÖÀÛ¼Æ½øÊ³´ÎÊı
+    bool is_black_rhongomyniad;         // ºÚÊ¨×ÓÍõ²»¿ÉÄæ±ê¼Ç
 
+
+    // nobu ²Êµ°
+    bool is_nobu;                       // µ±Ç°ÊÇ·ñÎª nobu Â·Ïß
+    bool is_oda_nobunaga;               // ³ÉÌå Oda Nobunaga Ëø¶¨±ê¼Ç
     uint32_t birth_timestamp;
     uint32_t last_interact_time;
     uint16_t age_days;
@@ -132,6 +140,9 @@ struct PetState {
         mapo_tofu_count = 0;
         is_black_rhongomyniad = false;
 
+
+        is_nobu = false;
+        is_oda_nobunaga = false;
         birth_timestamp = now;
         last_interact_time = now;
         age_days = 0;
@@ -140,13 +151,13 @@ struct PetState {
     }
 };
 
-// å­˜æ¡£å¤´
+// ´æµµÍ·
 struct SaveHeader {
     uint8_t version;
     uint16_t data_size;
     uint16_t checksum;
-    uint32_t sequence;      // å•è°ƒé€’å¢åºå·, ç”¨äºåˆ¤æ–­æ–°æ—§
-    uint32_t save_time;     // å­˜æ¡£æ—¶çš„ unix timestamp (ç”¨äºç¦»çº¿è¡¥å¿)
+    uint32_t sequence;      // µ¥µ÷µİÔöĞòºÅ, ÓÃÓÚÅĞ¶ÏĞÂ¾É
+    uint32_t save_time;     // ´æµµÊ±µÄ unix timestamp (ÓÃÓÚÀëÏß²¹³¥)
 };
 
 #endif // GAME_STATE_H

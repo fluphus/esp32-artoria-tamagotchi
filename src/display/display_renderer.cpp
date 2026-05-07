@@ -1,4 +1,4 @@
-// src/display/display_renderer.cpp
+﻿// src/display/display_renderer.cpp
 // 显示渲染器实现
 // 支持多后端: Serial 占位 / TFT_eSPI (SSD1351 128x128 65K OLED)
 
@@ -42,11 +42,18 @@ void DisplayRenderer::drawIdle(const DisplayModel& model) {
 void DisplayRenderer::drawStatus(const DisplayModel& model) {
     const PetState& p = model.petSnapshot;
     Serial.println("[Display] --- STATUS ---");
-    Serial.printf("[Display]   Form: %s\n", FORM_NAMES[p.form]);
-    Serial.printf("[Display]   HP: %d  SR: %d\n", p.health, p.seriousness);
-    Serial.printf("[Display]   Age: Day %d  Stage: %s\n", p.age_days + 1,
-        p.stage == STAGE_CHILD ? "Child" : "Adult");
-    Serial.printf("[Display]   Align: %s\n", ALIGNMENT_NAMES[p.alignment]);
+    if (p.is_nobu) {
+        Serial.println("[Display]   Name: nobu");
+        Serial.println("[Display]   HP: ?  SR: ?");
+        Serial.println("[Display]   Age: ?  Stage: ?");
+        Serial.println("[Display]   Align: ?");
+    } else {
+        Serial.printf("[Display]   Form: %s\n", FORM_NAMES[p.form]);
+        Serial.printf("[Display]   HP: %d  SR: %d\n", p.health, p.seriousness);
+        Serial.printf("[Display]   Age: Day %d  Stage: %s\n", p.age_days + 1,
+            p.stage == STAGE_CHILD ? "Child" : "Adult");
+        Serial.printf("[Display]   Align: %s\n", ALIGNMENT_NAMES[p.alignment]);
+    }
 }
 
 void DisplayRenderer::drawFeedDraw(const DisplayModel& model) {
@@ -85,8 +92,12 @@ void DisplayRenderer::drawSpecialFood(const DisplayModel& model) {
         Serial.printf("[Display]   %c %s\n", marker, SPECIAL_FOOD_TABLE[i].name);
     }
     if (model.mapoTriggered) {
-        Serial.printf("[Display]   !! MAPO TOFU (%d/%d) !!\n",
-            model.mapoCount, MAPO_TOFU_CURSE_THRESHOLD);
+        if (model.petSnapshot.is_nobu) {
+            Serial.printf("[Display]   !! [NOBU EVENT] (%d) !!\n", model.mapoCount);
+        } else {
+            Serial.printf("[Display]   !! MAPO TOFU (%d/%d) !!\n",
+                model.mapoCount, MAPO_TOFU_CURSE_THRESHOLD);
+        }
     }
 }
 
@@ -172,7 +183,7 @@ void DisplayRenderer::drawTextCentered(int16_t y, const char* text) {
 #include <TFT_eSPI.h>
 #include "DisplayManager.h"
 
-static TFT_eSPI tft = TFT_eSPI();
+TFT_eSPI tft = TFT_eSPI();
 
 // --- Helper: get HP bar color based on value ---
 static uint16_t getHPColor(int16_t hp) {
@@ -279,33 +290,63 @@ void DisplayRenderer::drawStatus(const DisplayModel& model) {
     int16_t y = STATUS_START_Y + STATUS_LINE_H;
     tft.setTextColor(COLOR_TEXT, COLOR_BG);
 
-    tft.setCursor(STATUS_LABEL_X, y); tft.print("Form:");
-    tft.setCursor(STATUS_VALUE_X, y); tft.print(FORM_NAMES[p.form]);
-    y += STATUS_LINE_H;
+    if (p.is_nobu) {
+        // nobu 彩蛋: 仅显示姓名, 其余为 "?"
+        tft.setCursor(STATUS_LABEL_X, y); tft.print("Name:");
+        tft.setCursor(STATUS_VALUE_X, y); tft.print("nobu");
+        y += STATUS_LINE_H;
 
-    tft.setCursor(STATUS_LABEL_X, y); tft.print("Stage:");
-    tft.setCursor(STATUS_VALUE_X, y); tft.print(p.stage == STAGE_CHILD ? "Child" : "Adult");
-    y += STATUS_LINE_H;
+        tft.setCursor(STATUS_LABEL_X, y); tft.print("Stage:");
+        tft.setCursor(STATUS_VALUE_X, y); tft.print("?");
+        y += STATUS_LINE_H;
 
-    tft.setCursor(STATUS_LABEL_X, y); tft.print("Align:");
-    tft.setCursor(STATUS_VALUE_X, y); tft.print(ALIGNMENT_NAMES[p.alignment]);
-    y += STATUS_LINE_H;
+        tft.setCursor(STATUS_LABEL_X, y); tft.print("Align:");
+        tft.setCursor(STATUS_VALUE_X, y); tft.print("?");
+        y += STATUS_LINE_H;
 
-    tft.setCursor(STATUS_LABEL_X, y); tft.printf("HP: %d/%d", p.health, HEALTH_MAX);
-    y += STATUS_LINE_H;
+        tft.setCursor(STATUS_LABEL_X, y); tft.print("HP:");
+        tft.setCursor(STATUS_VALUE_X, y); tft.print("?");
+        y += STATUS_LINE_H;
 
-    tft.setCursor(STATUS_LABEL_X, y); tft.printf("SR: %d/%d", p.seriousness, SERIOUSNESS_MAX);
-    y += STATUS_LINE_H;
+        tft.setCursor(STATUS_LABEL_X, y); tft.print("SR:");
+        tft.setCursor(STATUS_VALUE_X, y); tft.print("?");
+        y += STATUS_LINE_H;
 
-    tft.setCursor(STATUS_LABEL_X, y); tft.printf("Age: Day %d", p.age_days + 1);
-    y += STATUS_LINE_H;
+        tft.setCursor(STATUS_LABEL_X, y); tft.print("Age:");
+        tft.setCursor(STATUS_VALUE_X, y); tft.print("?");
+        y += STATUS_LINE_H;
 
-    tft.setCursor(STATUS_LABEL_X, y); tft.printf("Fed: %d/%d", p.daily_feed.feed_count, DAILY_FEED_LIMIT);
-    y += STATUS_LINE_H;
+        tft.setCursor(STATUS_LABEL_X, y); tft.print("Fed:");
+        tft.setCursor(STATUS_VALUE_X, y); tft.print("?");
+    } else {
+        tft.setCursor(STATUS_LABEL_X, y); tft.print("Form:");
+        tft.setCursor(STATUS_VALUE_X, y); tft.print(FORM_NAMES[p.form]);
+        y += STATUS_LINE_H;
 
-    if (p.mapo_tofu_count > 0) {
-        tft.setTextColor(COLOR_WARN, COLOR_BG);
-        tft.setCursor(STATUS_LABEL_X, y); tft.printf("Mapo: %d/%d", p.mapo_tofu_count, MAPO_TOFU_CURSE_THRESHOLD);
+        tft.setCursor(STATUS_LABEL_X, y); tft.print("Stage:");
+        tft.setCursor(STATUS_VALUE_X, y); tft.print(p.stage == STAGE_CHILD ? "Child" : "Adult");
+        y += STATUS_LINE_H;
+
+        tft.setCursor(STATUS_LABEL_X, y); tft.print("Align:");
+        tft.setCursor(STATUS_VALUE_X, y); tft.print(ALIGNMENT_NAMES[p.alignment]);
+        y += STATUS_LINE_H;
+
+        tft.setCursor(STATUS_LABEL_X, y); tft.printf("HP: %d/%d", p.health, HEALTH_MAX);
+        y += STATUS_LINE_H;
+
+        tft.setCursor(STATUS_LABEL_X, y); tft.printf("SR: %d/%d", p.seriousness, SERIOUSNESS_MAX);
+        y += STATUS_LINE_H;
+
+        tft.setCursor(STATUS_LABEL_X, y); tft.printf("Age: Day %d", p.age_days + 1);
+        y += STATUS_LINE_H;
+
+        tft.setCursor(STATUS_LABEL_X, y); tft.printf("Fed: %d/%d", p.daily_feed.feed_count, DAILY_FEED_LIMIT);
+        y += STATUS_LINE_H;
+
+        if (p.mapo_tofu_count > 0) {
+            tft.setTextColor(COLOR_WARN, COLOR_BG);
+            tft.setCursor(STATUS_LABEL_X, y); tft.printf("Mapo: %d/%d", p.mapo_tofu_count, MAPO_TOFU_CURSE_THRESHOLD);
+        }
     }
 
     // Hint at bottom
@@ -487,12 +528,18 @@ void DisplayRenderer::drawSpecialFood(const DisplayModel& model) {
         tft.print(SPECIAL_FOOD_TABLE[i].description);
     }
 
-    // Mapo tofu easter egg
+    // Mapo tofu easter egg / nobu event
     if (model.mapoTriggered) {
-        tft.setTextColor(COLOR_DESTROY, COLOR_BG);
         tft.setTextDatum(BC_DATUM);
         char buf[32];
-        snprintf(buf, sizeof(buf), "MAPO TOFU! (%d/%d)", model.mapoCount, MAPO_TOFU_CURSE_THRESHOLD);
+        if (model.petSnapshot.is_nobu) {
+            // nobu 占位显示
+            tft.setTextColor(COLOR_EVOLUTION, COLOR_BG);
+            snprintf(buf, sizeof(buf), "* EVENT *");
+        } else {
+            tft.setTextColor(COLOR_DESTROY, COLOR_BG);
+            snprintf(buf, sizeof(buf), "MAPO TOFU! (%d/%d)", model.mapoCount, MAPO_TOFU_CURSE_THRESHOLD);
+        }
         tft.drawString(buf, SCREEN_WIDTH / 2, SCREEN_HEIGHT - 4);
         tft.setTextDatum(TL_DATUM);
     }

@@ -58,7 +58,7 @@
 
 // --- 存档 ---
 #define SAVE_NVS_NAMESPACE          "fate_tama"
-#define SAVE_DATA_VERSION           6       // 版本号升级 (增加 save_time 离线补偿)
+#define SAVE_DATA_VERSION           7       // 版本号升级 (增加 nobu 彩蛋 + power config)
 
 // --- 销毁 ---
 #define DESTROY_COMBO_HOLD_MS       3000

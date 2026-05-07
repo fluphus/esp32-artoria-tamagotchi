@@ -1,4 +1,4 @@
-// src/display/display_config.h
+﻿// src/display/display_config.h
 // 显示系统配置 - 屏幕参数、后端选择、动画时长、布局常量
 
 #ifndef DISPLAY_CONFIG_H
@@ -116,6 +116,7 @@
 #define ANIM_DURATION_MAPO_TOFU     1500    // 麻婆豆腐彩蛋
 #define ANIM_DURATION_RHONGOMYNIAD  3000    // 狮子王终态
 #define ANIM_DURATION_BLACK_RHONGO  3000    // 黑狮子王终态
+#define ANIM_DURATION_NOBU_EVENT    1500    // nobu 彩蛋事件
 #define ANIM_DURATION_DESTROY       2000    // 销毁动画
 #define ANIM_DURATION_DAY_END       1500    // 日结算过场
 #define ANIM_DURATION_SAVE          500     // 存档图标

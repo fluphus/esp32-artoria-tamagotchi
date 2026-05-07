@@ -133,7 +133,7 @@ FeedOutcome FeedingSystem::feed(PetState& pet, const uint8_t picked[3],
     outcome.health_before = pet.health;
     outcome.seriousness_before = pet.seriousness;
 
-    // å¥åº·å€¼ç»“ç®—
+    // ½¡¿µÖµ½áËã
     int16_t totalHealthDelta = 0;
     for (uint8_t i = 0; i < FEED_PICK_COUNT; i++)
         totalHealthDelta += FOOD_TABLE[picked[i]].health_delta;
@@ -147,14 +147,14 @@ FeedOutcome FeedingSystem::feed(PetState& pet, const uint8_t picked[3],
 
     pet.health = clampHealth(pet.health + totalHealthDelta + comboHealth);
 
-    // ä¸¥è‚ƒå€¼: é£Ÿç‰©å–œå¥½
+    // ÑÏËàÖµ: Ê³ÎïÏ²ºÃ
     int16_t dislikeSR = calcDislikeSeriousness(pet, picked);
     outcome.seriousness_from_dislike = dislikeSR;
     pet.seriousness += dislikeSR;
     if (pet.seriousness > SERIOUSNESS_MAX) pet.seriousness = SERIOUSNESS_MAX;
     if (pet.seriousness < SERIOUSNESS_MIN) pet.seriousness = SERIOUSNESS_MIN;
 
-    // ä¸¥è‚ƒå€¼: è¿æº
+    // ÑÏËàÖµ: Á¬Ğ¯
     int16_t comboSR = calcComboSeriousness(pet, combo);
     outcome.seriousness_from_combo = comboSR;
     pet.seriousness += comboSR;
@@ -164,18 +164,18 @@ FeedOutcome FeedingSystem::feed(PetState& pet, const uint8_t picked[3],
     if (combo != COMBO_NONE)
         outcome.combo_triggered = true;
 
-    // æŠ•å–‚è®°å½•
+    // Í¶Î¹¼ÇÂ¼
     pet.daily_feed.feed_count++;
     pet.daily_feed.last_feed_time = currentTime;
     pet.last_interact_time = currentTime;
 
-    // === æ—¶é—´çª—ç»Ÿè®¡ (æŒ‰æŠ•å–‚æ¬¡æ•°, å¤šæ•°å±æ€§åˆ¤å®š) ===
+    // === Ê±¼ä´°Í³¼Æ (°´Í¶Î¹´ÎÊı, ¶àÊıÊôĞÔÅĞ¶¨) ===
     uint8_t healthyCount = 0;
     for (uint8_t i = 0; i < FEED_PICK_COUNT; i++) {
         if (FOOD_TABLE[picked[i]].is_healthy)
             healthyCount++;
     }
-    // 3ä»½ä¸­ >= 2ä»½å¥åº· -> æœ¬æ¬¡ä¸ºå¥åº·æŠ•å–‚, å¦åˆ™ä¸ºåƒåœ¾æŠ•å–‚
+    // 3·İÖĞ >= 2·İ½¡¿µ -> ±¾´ÎÎª½¡¿µÍ¶Î¹, ·ñÔòÎªÀ¬»øÍ¶Î¹
     bool feedIsHealthy = (healthyCount >= 2);
 
     bool inWindow = isInFeedWindow(currentHour);
@@ -211,7 +211,12 @@ void FeedingSystem::applySpecialFood(PetState& pet, FeedOutcome& outcome, uint8_
                   SPECIAL_FOOD_TABLE[specialFoodId].description);
     Serial.println("[Feed] (Special animation placeholder)");
 
-    // éº»å©†è±†è…å½©è›‹åˆ¤å®š
+    // Oda Nobunaga: ÂéÆÅ¶¹¸¯¼ÆÊıËø¶¨Îª1, ²»ÔÙ´¥·¢
+    if (pet.is_oda_nobunaga) {
+        return;
+    }
+
+        // ÂéÆÅ¶¹¸¯²Êµ°ÅĞ¶¨
     if (rollMapoTofu()) {
         pet.mapo_tofu_count++;
         outcome.mapo_tofu_triggered = true;
@@ -240,19 +245,19 @@ DayEndOutcome FeedingSystem::processDayEnd(PetState& pet) {
     outcome.window_penalty_applied = false;
     outcome.missed_feed_penalty = false;
 
-    // å¥–åŠ±: æ­£ç¡®æ—¶é—´çª—å†… >= 2 æ¬¡å¥åº·æŠ•å–‚
+    // ½±Àø: ÕıÈ·Ê±¼ä´°ÄÚ >= 2 ´Î½¡¿µÍ¶Î¹
     if (pet.daily_feed.healthy_in_window >= 2) {
         pet.health = clampHealth(pet.health + CORRECT_WINDOW_BONUS);
         outcome.window_bonus_applied = true;
     }
 
-    // æƒ©ç½š: éæ­£ç¡®æ—¶é—´çª—å†… >= 2 æ¬¡åƒåœ¾æŠ•å–‚
+    // ³Í·£: ·ÇÕıÈ·Ê±¼ä´°ÄÚ >= 2 ´ÎÀ¬»øÍ¶Î¹
     if (pet.daily_feed.junk_outside_window >= 2) {
         pet.health = clampHealth(pet.health - WRONG_WINDOW_PENALTY);
         outcome.window_penalty_applied = true;
     }
 
-    // æœªå–‚æ»¡
+    // Î´Î¹Âú
     if (pet.daily_feed.feed_count < DAILY_FEED_LIMIT)
         outcome.missed_feed_penalty = true;
 

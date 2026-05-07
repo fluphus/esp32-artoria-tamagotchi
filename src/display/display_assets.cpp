@@ -1,4 +1,4 @@
-// src/display/display_assets.cpp
+﻿// src/display/display_assets.cpp
 // 资源数据定义 - 当前全部为空占位
 // 用户放入真实图片资源后, 替换此文件中的 nullptr 为实际数据指针
 
@@ -19,6 +19,8 @@ const SpriteAsset SPRITE_FORM[FORM_COUNT] = {
     { nullptr, 0, 0 },  // FORM_WHITE_RULER
     { nullptr, 0, 0 },  // FORM_WHITE_LANCER_RHONGOMYNIAD
     { nullptr, 0, 0 },  // FORM_BLACK_LANCER_RHONGOMYNIAD
+    { nullptr, 0, 0 },  // FORM_NOBU
+    { nullptr, 0, 0 },  // FORM_ODA_NOBUNAGA
 };
 
 // ============================================================================
@@ -57,3 +59,5 @@ const AnimFrameSet ANIM_DESTROY_FRAMES    = { nullptr, 0, 100 };
 const AnimFrameSet ANIM_RHONGO_FRAMES     = { nullptr, 0, 200 };
 const AnimFrameSet ANIM_MAPO_FRAMES       = { nullptr, 0, 100 };
 const AnimFrameSet ANIM_COMBO_FRAMES      = { nullptr, 0, 100 };
+
+const AnimFrameSet ANIM_NOBU_FRAMES       = { nullptr, 0, 100 };

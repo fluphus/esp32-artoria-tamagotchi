@@ -1,7 +1,7 @@
 // src/display/DisplayManager.cpp
-// æ˜¾ç¤ºç®¡ç†å™¨å®ç° - UI çŠ¶æ€æœº
-// show*() åªæ›´æ–° DisplayModel + æ ‡è®° dirty
-// update() ç®¡ç†åŠ¨ç”»/é¡µé¢è¶…æ—¶, renderIfDirty() å§”æ‰˜ DisplayRenderer ç»˜åˆ¶
+// ÏÔÊ¾¹ÜÀíÆ÷ÊµÏÖ - UI ×´Ì¬»ú
+// show*() Ö»¸üĞÂ DisplayModel + ±ê¼Ç dirty
+// update() ¹ÜÀí¶¯»­/Ò³Ãæ³¬Ê±, renderIfDirty() Î¯ÍĞ DisplayRenderer »æÖÆ
 
 #include "DisplayManager.h"
 #include "../input/menu_controller.h"
@@ -10,7 +10,7 @@
 #include <string.h>
 
 // ============================================================================
-//  é™æ€æˆå‘˜åˆå§‹åŒ–
+//  ¾²Ì¬³ÉÔ±³õÊ¼»¯
 // ============================================================================
 
 DisplayPage  DisplayManager::_currentPage       = PAGE_BOOT;
@@ -23,19 +23,19 @@ bool         DisplayManager::_dirty             = true;
 DisplayModel DisplayManager::_model;
 uint32_t     DisplayManager::_lastRenderMs      = 0;
 
-// Page hold æœºåˆ¶
+// Page hold »úÖÆ
 bool         DisplayManager::_pageHoldActive    = false;
 uint32_t     DisplayManager::_pageHoldUntilMs   = 0;
 DisplayPage  DisplayManager::_pageAfterHold     = PAGE_IDLE;
 UIContext    DisplayManager::_contextAfterHold  = UI_IDLE;
 
-// Pending evolution (éº»å©†è¯…å’’é“¾å¼åŠ¨ç”»)
+// Pending evolution (ÂéÆÅ×çÖäÁ´Ê½¶¯»­)
 bool             DisplayManager::_pendingEvolutionActive   = false;
 EvolutionResult  DisplayManager::_pendingEvolution         = {};
 int16_t          DisplayManager::_pendingEvolutionSrAfter  = 0;
 
 // ============================================================================
-//  ç”Ÿå‘½å‘¨æœŸ
+//  ÉúÃüÖÜÆÚ
 // ============================================================================
 
 void DisplayManager::init() {
@@ -56,11 +56,11 @@ void DisplayManager::init() {
 }
 
 void DisplayManager::update(uint32_t nowMs) {
-    // --- åŠ¨ç”»è¶…æ—¶æ£€æµ‹ ---
+    // --- ¶¯»­³¬Ê±¼ì²â ---
     if (_currentAnim != ANIM_NONE && _animDurationMs > 0) {
         uint32_t elapsed = nowMs - _animStartedMs;
         if (elapsed >= _animDurationMs) {
-            // åŠ¨ç”»ç»“æŸ
+            // ¶¯»­½áÊø
             AnimState finishedAnim = _currentAnim;
             UIContext ctx = _animCompleteContext;
             _currentAnim = ANIM_NONE;
@@ -70,42 +70,42 @@ void DisplayManager::update(uint32_t nowMs) {
             _model.animFrameIndex = 0;
             markDirty();
 
-            // æ£€æŸ¥æ˜¯å¦æœ‰ pending evolution (éº»å©†è¯…å’’é“¾å¼åŠ¨ç”»)
+            // ¼ì²éÊÇ·ñÓĞ pending evolution (ÂéÆÅ×çÖäÁ´Ê½¶¯»­)
             if (_pendingEvolutionActive &&
-                (finishedAnim == ANIM_MAPO_TOFU)) {
+                (finishedAnim == ANIM_MAPO_TOFU || finishedAnim == ANIM_NOBU_EVENT)) {
                 _pendingEvolutionActive = false;
-                // ç›´æ¥æ’­æ”¾ pending evolution åŠ¨ç”»
+                // Ö±½Ó²¥·Å pending evolution ¶¯»­
                 showEvolutionEvent(_pendingEvolution, _pendingEvolutionSrAfter);
-                // ä¸é€šçŸ¥ MenuController, evolution åŠ¨ç”»ç»“æŸåç”±æ­£å¸¸æµç¨‹å¤„ç†
+                // ²»Í¨Öª MenuController, evolution ¶¯»­½áÊøºóÓÉÕı³£Á÷³Ì´¦Àí
             } else {
-                // é€šçŸ¥ MenuController åŠ¨ç”»å®Œæˆ
+                // Í¨Öª MenuController ¶¯»­Íê³É
                 if (ctx != UI_IDLE || finishedAnim == ANIM_POKE) {
                     menuController.onAnimationComplete(ctx);
                 } else {
-                    // åŠ¨ç”»å®Œæˆ context ä¸º UI_IDLE ä¸”ä¸éœ€è¦é€šçŸ¥ MenuController æ—¶,
-                    // ç›´æ¥åˆ‡å› idle é¡µé¢ (å¦‚ ANIM_DESTROY, ANIM_DAY_END ç­‰)
+                    // ¶¯»­Íê³É context Îª UI_IDLE ÇÒ²»ĞèÒªÍ¨Öª MenuController Ê±,
+                    // Ö±½ÓÇĞ»Ø idle Ò³Ãæ (Èç ANIM_DESTROY, ANIM_DAY_END µÈ)
                     switchPage(PAGE_IDLE);
                 }
             }
         } else {
-            // åŠ¨ç”»æ’­æ”¾ä¸­: æ›´æ–°å¸§çŠ¶æ€å¹¶æŒç»­åˆ·æ–°
+            // ¶¯»­²¥·ÅÖĞ: ¸üĞÂÖ¡×´Ì¬²¢³ÖĞøË¢ĞÂ
             _model.animState = _currentAnim;
             _model.animElapsedMs = elapsed;
-            // æŒ‰ DISPLAY_FRAME_MS è®¡ç®—å¸§ç´¢å¼•
+            // °´ DISPLAY_FRAME_MS ¼ÆËãÖ¡Ë÷Òı
             _model.animFrameIndex = (uint8_t)(elapsed / DISPLAY_FRAME_MS);
             markDirty();
         }
     }
 
-    // --- Page hold è¶…æ—¶æ£€æµ‹ ---
+    // --- Page hold ³¬Ê±¼ì²â ---
     if (_pageHoldActive && nowMs >= _pageHoldUntilMs) {
         _pageHoldActive = false;
         DisplayPage nextPage = _pageAfterHold;
-        // UIContext nextCtx = _contextAfterHold; // ä¸ä¸»åŠ¨åˆ‡ context, ç”± switchPage è§¦å‘
+        // UIContext nextCtx = _contextAfterHold; // ²»Ö÷¶¯ÇĞ context, ÓÉ switchPage ´¥·¢
         switchPage(nextPage);
     }
 
-    // --- é¡µé¢è‡ªåŠ¨åˆ‡æ¢ ---
+    // --- Ò³Ãæ×Ô¶¯ÇĞ»» ---
     switch (_currentPage) {
         case PAGE_BOOT:
             if (nowMs - _pageEnteredMs >= ANIM_DURATION_BOOT) {
@@ -114,8 +114,8 @@ void DisplayManager::update(uint32_t nowMs) {
             break;
 
         case PAGE_FEED_RESULT:
-            // è‡³å°‘åœç•™ PAGE_DURATION_FEED_RESULT (ç”± hold æœºåˆ¶ç®¡ç†)
-            // å¦‚æœæ²¡æœ‰ hold active ä¸”æ²¡æœ‰åŠ¨ç”», è¯´æ˜ hold å·²ç»“æŸæˆ–æœªè®¾ç½®
+            // ÖÁÉÙÍ£Áô PAGE_DURATION_FEED_RESULT (ÓÉ hold »úÖÆ¹ÜÀí)
+            // Èç¹ûÃ»ÓĞ hold active ÇÒÃ»ÓĞ¶¯»­, ËµÃ÷ hold ÒÑ½áÊø»òÎ´ÉèÖÃ
             if (!_pageHoldActive && _currentAnim == ANIM_NONE &&
                 (nowMs - _pageEnteredMs >= PAGE_DURATION_FEED_RESULT)) {
                 switchPage(PAGE_IDLE);
@@ -126,13 +126,13 @@ void DisplayManager::update(uint32_t nowMs) {
             break;
     }
 
-    // --- Toast è¶…æ—¶ ---
+    // --- Toast ³¬Ê± ---
     if (_model.toast[0] != '\0' && nowMs >= _model.toastUntilMs) {
         _model.toast[0] = '\0';
         markDirty();
     }
 
-    // --- æ¸²æŸ“ (å¸§ç‡é™åˆ¶) ---
+    // --- äÖÈ¾ (Ö¡ÂÊÏŞÖÆ) ---
     if (_dirty && (nowMs - _lastRenderMs >= DISPLAY_FRAME_MS)) {
         renderIfDirty();
         _lastRenderMs = nowMs;
@@ -143,7 +143,7 @@ void DisplayManager::renderIfDirty() {
     if (!_dirty) return;
     _dirty = false;
 
-    // æ ¹æ®å½“å‰é¡µé¢è°ƒç”¨å¯¹åº”çš„ renderer
+    // ¸ù¾İµ±Ç°Ò³Ãæµ÷ÓÃ¶ÔÓ¦µÄ renderer
     switch (_currentPage) {
         case PAGE_BOOT:
             DisplayRenderer::drawBoot(_model);
@@ -185,18 +185,18 @@ void DisplayManager::renderIfDirty() {
             break;
     }
 
-    // Toast å åŠ å±‚
+    // Toast µş¼Ó²ã
     if (_model.toast[0] != '\0') {
         DisplayRenderer::drawToast(_model);
     }
 }
 
 // ============================================================================
-//  é¡µé¢/åŠ¨ç”»æ§åˆ¶
+//  Ò³Ãæ/¶¯»­¿ØÖÆ
 // ============================================================================
 
 void DisplayManager::switchPage(DisplayPage page) {
-    // å¦‚æœå½“å‰é¡µé¢æ­£åœ¨ hold ä¸­, ä¸å…è®¸å¤–éƒ¨åˆ‡èµ° (é™¤éåˆ‡åˆ°åŒä¸€é¡µé¢)
+    // Èç¹ûµ±Ç°Ò³ÃæÕıÔÚ hold ÖĞ, ²»ÔÊĞíÍâ²¿ÇĞ×ß (³ı·ÇÇĞµ½Í¬Ò»Ò³Ãæ)
     if (_pageHoldActive && page != _currentPage) {
         return;
     }
@@ -233,13 +233,13 @@ bool DisplayManager::isAnimationPlaying() {
 }
 
 bool DisplayManager::isPageBlockingInput() {
-    // è¿™äº›é¡µé¢/çŠ¶æ€ä¸‹é˜»å¡æ™®é€šè¾“å…¥
+    // ÕâĞ©Ò³Ãæ/×´Ì¬ÏÂ×èÈûÆÕÍ¨ÊäÈë
     if (_currentAnim != ANIM_NONE && _currentAnim != ANIM_IDLE) return true;
     if (_currentPage == PAGE_BOOT) return true;
     if (_currentPage == PAGE_EVOLUTION) return true;
     if (_currentPage == PAGE_DAY_END) return true;
     if (_currentPage == PAGE_WAIT_TIME_SET) return true;
-    // Page hold æœŸé—´é˜»å¡è¾“å…¥ (FeedResult hold, SpecialFood confirm hold)
+    // Page hold ÆÚ¼ä×èÈûÊäÈë (FeedResult hold, SpecialFood confirm hold)
     if (_pageHoldActive) return true;
     return false;
 }
@@ -249,7 +249,7 @@ bool DisplayManager::isPageHoldActive() {
 }
 
 // ============================================================================
-//  å†…éƒ¨è¾…åŠ©
+//  ÄÚ²¿¸¨Öú
 // ============================================================================
 
 void DisplayManager::markDirty() {
@@ -267,6 +267,7 @@ uint32_t DisplayManager::getAnimDuration(AnimState anim) {
         case ANIM_BLACK_RHONGOMYNIAD:   return ANIM_DURATION_BLACK_RHONGO;
         case ANIM_DESTROY:              return ANIM_DURATION_DESTROY;
         case ANIM_DAY_END:              return ANIM_DURATION_DAY_END;
+        case ANIM_NOBU_EVENT:           return ANIM_DURATION_NOBU_EVENT;
         case ANIM_SAVE:                 return ANIM_DURATION_SAVE;
         default:                        return 0;
     }
@@ -280,14 +281,14 @@ void DisplayManager::holdPageThen(uint32_t durationMs, DisplayPage nextPage, UIC
 }
 
 // ============================================================================
-//  å® ç‰©å¿«ç…§æ›´æ–°
+//  ³èÎï¿ìÕÕ¸üĞÂ
 // ============================================================================
 
 void DisplayManager::updatePetSnapshot(const PetState& pet) {
     bool changed = memcmp(&_model.petSnapshot, &pet, sizeof(PetState)) != 0;
     if (changed) {
         _model.petSnapshot = pet;
-        // æ›´æ–°æ—¶é—´/æ—¥æœŸå­—ç¬¦ä¸²
+        // ¸üĞÂÊ±¼ä/ÈÕÆÚ×Ö·û´®
         timeManager.getFormattedTime(_model.timeStr, sizeof(_model.timeStr));
         timeManager.getFormattedDate(_model.dateStr, sizeof(_model.dateStr));
         _model.ageDay = pet.age_days + 1;
@@ -298,10 +299,10 @@ void DisplayManager::updatePetSnapshot(const PetState& pet) {
 }
 
 // ============================================================================
-//  show* å®ç° - åªæ›´æ–° model + é¡µé¢ + åŠ¨ç”» + dirty
+//  show* ÊµÏÖ - Ö»¸üĞÂ model + Ò³Ãæ + ¶¯»­ + dirty
 // ============================================================================
 
-// --- ç³»ç»Ÿ ---
+// --- ÏµÍ³ ---
 
 void DisplayManager::showBootScreen() {
     _model.bootMessage[0] = '\0';
@@ -332,7 +333,7 @@ void DisplayManager::showSystemReady() {
     showToast("Ready", 1000);
 }
 
-// --- çŠ¶æ€é¢æ¿ ---
+// --- ×´Ì¬Ãæ°å ---
 
 void DisplayManager::showStatusPanel(const PetState& pet) {
     _model.petSnapshot = pet;
@@ -343,7 +344,7 @@ void DisplayManager::hideStatusPanel() {
     switchPage(PAGE_IDLE);
 }
 
-// --- æŠ•å–‚æµç¨‹ ---
+// --- Í¶Î¹Á÷³Ì ---
 
 void DisplayManager::showCannotInteract() {
     showToast("Cannot interact", 1500);
@@ -385,11 +386,11 @@ void DisplayManager::showFeedResult(const FeedOutcome& outcome, int16_t srAfter)
     _model.feedSrAfter = srAfter;
     switchPage(PAGE_FEED_RESULT);
 
-    // é combo æŠ•å–‚: è®¾ç½® hold, ç¡®ä¿ç»“æœé¡µè‡³å°‘åœç•™ PAGE_DURATION_FEED_RESULT
+    // ·Ç combo Í¶Î¹: ÉèÖÃ hold, È·±£½á¹ûÒ³ÖÁÉÙÍ£Áô PAGE_DURATION_FEED_RESULT
     if (!outcome.combo_triggered) {
         holdPageThen(PAGE_DURATION_FEED_RESULT, PAGE_IDLE, UI_IDLE);
     }
-    // combo è·¯å¾„: ç”± ANIM_COMBO åŠ¨ç”»ç®¡ç†, ä¸è®¾ hold
+    // combo Â·¾¶: ÓÉ ANIM_COMBO ¶¯»­¹ÜÀí, ²»Éè hold
 }
 
 void DisplayManager::showFeedComboTriggered(ComboType combo) {
@@ -401,7 +402,7 @@ void DisplayManager::showFeedCancel() {
     switchPage(PAGE_IDLE);
 }
 
-// --- ç‰¹æ®Šé£Ÿç‰© ---
+// --- ÌØÊâÊ³Îï ---
 
 void DisplayManager::showSpecialFoodSelection(uint8_t count) {
     _model.specialFoodCount = count;
@@ -425,14 +426,19 @@ void DisplayManager::showSpecialFoodConfirm(uint8_t id, const FeedOutcome& outco
     markDirty();
 
     if (outcome.mapo_tofu_triggered) {
-        setAnimation(ANIM_MAPO_TOFU, ANIM_DURATION_MAPO_TOFU, UI_IDLE);
+        // nobu Â·ÏßÊ¹ÓÃÕ¼Î»¶¯»­
+        if (_model.petSnapshot.is_nobu) {
+            setAnimation(ANIM_NOBU_EVENT, ANIM_DURATION_NOBU_EVENT, UI_IDLE);
+        } else {
+            setAnimation(ANIM_MAPO_TOFU, ANIM_DURATION_MAPO_TOFU, UI_IDLE);
+        }
     } else {
-        // é mapo: è‡³å°‘æ˜¾ç¤ºç¡®è®¤ 1 ç§’
+        // ·Ç mapo: ÖÁÉÙÏÔÊ¾È·ÈÏ 1 Ãë
         holdPageThen(1000, PAGE_IDLE, UI_IDLE);
     }
 }
 
-// --- éº»å©†è±†è… ---
+// --- ÂéÆÅ¶¹¸¯ ---
 
 void DisplayManager::showMapoTofuTriggered(uint8_t currentCount, uint8_t threshold) {
     _model.mapoTriggered = true;
@@ -445,7 +451,7 @@ void DisplayManager::showMapoTofuCurseActivated() {
     markDirty();
 }
 
-// --- æˆ³ä¸€æˆ³ ---
+// --- ´ÁÒ»´Á ---
 
 void DisplayManager::showPokeAnimation() {
     switchPage(PAGE_POKE_ANIM);
@@ -459,7 +465,7 @@ void DisplayManager::showPokeResult(bool valueChanged, int16_t srBefore, int16_t
     markDirty();
 }
 
-// --- æ—¥ç»“ç®— ---
+// --- ÈÕ½áËã ---
 
 void DisplayManager::showDayEndStart() {
     memset(&_model.dayEnd, 0, sizeof(_model.dayEnd));
@@ -509,7 +515,7 @@ void DisplayManager::showNewDayDetected() {
     showToast("New day!", 1000);
 }
 
-// --- è¿›åŒ–ç³»ç»Ÿ ---
+// --- ½ø»¯ÏµÍ³ ---
 
 void DisplayManager::showChildGraduation(const EvolutionResult& result, Alignment alignment) {
     _model.evolution = result;
@@ -528,8 +534,8 @@ void DisplayManager::showFormChange(Form formBefore, Form formAfter, int16_t ser
 }
 
 void DisplayManager::showEvolutionEvent(const EvolutionResult& result, int16_t srAfter) {
-    // å¦‚æœå½“å‰æ­£åœ¨æ’­æ”¾ ANIM_MAPO_TOFU, å°†è¿›åŒ–æ’é˜Ÿç­‰å¾…
-    if (_currentAnim == ANIM_MAPO_TOFU) {
+    // Èç¹ûµ±Ç°ÕıÔÚ²¥·Å ANIM_MAPO_TOFU, ½«½ø»¯ÅÅ¶ÓµÈ´ı
+    if (_currentAnim == ANIM_MAPO_TOFU || _currentAnim == ANIM_NOBU_EVENT) {
         _pendingEvolutionActive = true;
         _pendingEvolution = result;
         _pendingEvolutionSrAfter = srAfter;
@@ -554,7 +560,7 @@ void DisplayManager::showEvolutionEvent(const EvolutionResult& result, int16_t s
     setAnimation(anim, duration, UI_EVOLUTION);
 }
 
-// --- ä¸¥è‚ƒå€¼ç³»ç»Ÿ ---
+// --- ÑÏËàÖµÏµÍ³ ---
 
 void DisplayManager::showIdleTierChange(SeriousnessTier tierBefore, SeriousnessTier tierAfter) {
     _model.tierBefore = tierBefore;
@@ -582,7 +588,7 @@ void DisplayManager::showMissedFeedPenalty(int16_t srBefore, int16_t srAfter, in
     markDirty();
 }
 
-// --- é”€æ¯/é‡ç½® ---
+// --- Ïú»Ù/ÖØÖÃ ---
 
 void DisplayManager::showDestroyConfirm(uint8_t cursor) {
     _model.destroyCursor = cursor;
@@ -597,7 +603,7 @@ void DisplayManager::showDestroyCursorMove(uint8_t cursor) {
 
 void DisplayManager::showDestroyExecuted(Form destroyedForm) {
     _model.destroyedForm = destroyedForm;
-    switchPage(PAGE_EVOLUTION);  // å¤ç”¨è¿›åŒ–é¡µé¢å±•ç¤ºé”€æ¯åŠ¨ç”»
+    switchPage(PAGE_EVOLUTION);  // ¸´ÓÃ½ø»¯Ò³ÃæÕ¹Ê¾Ïú»Ù¶¯»­
     setAnimation(ANIM_DESTROY, ANIM_DURATION_DESTROY, UI_IDLE);
 }
 
@@ -609,13 +615,13 @@ void DisplayManager::showDestroyCancelled() {
     switchPage(PAGE_IDLE);
 }
 
-// --- å­˜æ¡£ ---
+// --- ´æµµ ---
 
 void DisplayManager::showAutoSave() {
     showToast("Autosaved", 800);
 }
 
-// --- ç­‰å¾…æ—¶é—´è®¾ç½® ---
+// --- µÈ´ıÊ±¼äÉèÖÃ ---
 
 void DisplayManager::showWaitTimeSet() {
     switchPage(PAGE_WAIT_TIME_SET);
