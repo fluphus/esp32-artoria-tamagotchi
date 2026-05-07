@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 png_to_rgb565.py - Convert PNG images to RGB565 C arrays for ESP32 TFT displays.
 

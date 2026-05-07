@@ -1,4 +1,4 @@
-﻿// src/display/DisplayManager.cpp
+// src/display/DisplayManager.cpp
 // 显示管理器实现 - UI 状态机
 // show*() 只更新 DisplayModel + 标记 dirty
 // update() 管理动画/页面超时, renderIfDirty() 委托 DisplayRenderer 绘制
@@ -29,6 +29,11 @@ uint32_t     DisplayManager::_pageHoldUntilMs   = 0;
 DisplayPage  DisplayManager::_pageAfterHold     = PAGE_IDLE;
 UIContext    DisplayManager::_contextAfterHold  = UI_IDLE;
 
+// Pending evolution (麻婆诅咒链式动画)
+bool             DisplayManager::_pendingEvolutionActive   = false;
+EvolutionResult  DisplayManager::_pendingEvolution         = {};
+int16_t          DisplayManager::_pendingEvolutionSrAfter  = 0;
+
 // ============================================================================
 //  生命周期
 // ============================================================================
@@ -44,6 +49,7 @@ void DisplayManager::init() {
     _pageHoldUntilMs = 0;
     _pageAfterHold = PAGE_IDLE;
     _contextAfterHold = UI_IDLE;
+    _pendingEvolutionActive = false;
 
     DisplayRenderer::init();
     markDirty();
@@ -64,13 +70,22 @@ void DisplayManager::update(uint32_t nowMs) {
             _model.animFrameIndex = 0;
             markDirty();
 
-            // 通知 MenuController 动画完成
-            if (ctx != UI_IDLE || finishedAnim == ANIM_POKE) {
-                menuController.onAnimationComplete(ctx);
+            // 检查是否有 pending evolution (麻婆诅咒链式动画)
+            if (_pendingEvolutionActive &&
+                (finishedAnim == ANIM_MAPO_TOFU)) {
+                _pendingEvolutionActive = false;
+                // 直接播放 pending evolution 动画
+                showEvolutionEvent(_pendingEvolution, _pendingEvolutionSrAfter);
+                // 不通知 MenuController, evolution 动画结束后由正常流程处理
             } else {
-                // 动画完成 context 为 UI_IDLE 且不需要通知 MenuController 时,
-                // 直接切回 idle 页面 (如 ANIM_DESTROY, ANIM_DAY_END 等)
-                switchPage(PAGE_IDLE);
+                // 通知 MenuController 动画完成
+                if (ctx != UI_IDLE || finishedAnim == ANIM_POKE) {
+                    menuController.onAnimationComplete(ctx);
+                } else {
+                    // 动画完成 context 为 UI_IDLE 且不需要通知 MenuController 时,
+                    // 直接切回 idle 页面 (如 ANIM_DESTROY, ANIM_DAY_END 等)
+                    switchPage(PAGE_IDLE);
+                }
             }
         } else {
             // 动画播放中: 更新帧状态并持续刷新
@@ -505,6 +520,14 @@ void DisplayManager::showFormChange(Form formBefore, Form formAfter, int16_t ser
 }
 
 void DisplayManager::showEvolutionEvent(const EvolutionResult& result, int16_t srAfter) {
+    // 如果当前正在播放 ANIM_MAPO_TOFU, 将进化排队等待
+    if (_currentAnim == ANIM_MAPO_TOFU) {
+        _pendingEvolutionActive = true;
+        _pendingEvolution = result;
+        _pendingEvolutionSrAfter = srAfter;
+        return;
+    }
+
     _model.evolution = result;
     _model.srAfter = srAfter;
 

@@ -210,14 +210,19 @@ void MenuController::handleSpecialFood(GameInput action) {
         case INPUT_SPECIAL_FOOD_SELECT:
             if (_combo_pending) {
                 feedingSystem.applySpecialFood(*_pet, _last_feed_outcome, _sfood_cursor);
+                _combo_pending = false;
+
+                // 先通知 UI 显示特殊食物确认 (会启动 ANIM_MAPO_TOFU 如果触发)
+                safeCallback(_callbacks->onSpecialFoodSelect, _sfood_cursor, _last_feed_outcome);
+
+                // 如果麻婆诅咒激活, 在 mapo 动画之后排队播放进化动画
                 if (_last_feed_outcome.mapo_tofu_curse_activated) {
                     EvolutionResult eR = evolutionSystem.checkMapoCurse(*_pet);
                     if (eR.event != EVO_NONE) {
                         safeCallback(_callbacks->onEvolution, eR, _pet->seriousness);
                     }
                 }
-                _combo_pending = false;
-                safeCallback(_callbacks->onSpecialFoodSelect, _sfood_cursor, _last_feed_outcome);
+
                 saveManager.save(*_pet);
                 saveManager.markSaved(timeManager.now());
                 switchContext(UI_IDLE);

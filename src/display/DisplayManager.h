@@ -171,6 +171,11 @@ private:
     static DisplayPage  _pageAfterHold;         // hold 结束后切换到的页面
     static UIContext    _contextAfterHold;      // hold 结束后切换到的上下文
 
+    // --- Pending evolution (麻婆诅咒链式动画) ---
+    static bool             _pendingEvolutionActive;
+    static EvolutionResult  _pendingEvolution;
+    static int16_t          _pendingEvolutionSrAfter;
+
     // 内部: 标记脏
     static void markDirty();
 

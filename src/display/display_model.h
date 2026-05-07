@@ -1,4 +1,4 @@
-﻿// src/display/display_model.h
+// src/display/display_model.h
 // 显示数据模型 - DisplayManager 的 show*() 函数只更新此模型
 // DisplayRenderer 根据此模型绘制屏幕
 

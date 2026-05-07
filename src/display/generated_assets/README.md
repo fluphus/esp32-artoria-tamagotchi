@@ -1,4 +1,4 @@
-﻿# Generated Assets
+# Generated Assets
 
 This directory holds auto-generated RGB565 C arrays for use as sprite/animation assets.
 
