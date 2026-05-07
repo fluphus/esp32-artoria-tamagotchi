@@ -29,13 +29,13 @@ struct UICallbacks {
     void (*onFeedDrawStart)(const FeedDraw& draw);          // 展示4张食物卡动画
     void (*onFeedCursorMove)(uint8_t cursor, const bool selected[4]);  // 光标移动
     void (*onFeedSlotToggle)(uint8_t slot, bool selected);  // 选取/取消选取
-    void (*onFeedConfirm)(const FeedOutcome& outcome);      // 投喂结果
+    void (*onFeedConfirm)(const FeedOutcome& outcome, int16_t srAfter);  // 投喂结果 + 最终SR
     void (*onFeedCancel)();                                 // 取消投喂
 
     // --- 特殊食物 ---
     void (*onSpecialFoodShow)(uint8_t count);               // 展示特殊食物选项
     void (*onSpecialFoodCursor)(uint8_t cursor);            // 光标移动
-    void (*onSpecialFoodSelect)(uint8_t id);                // 选择确认
+    void (*onSpecialFoodSelect)(uint8_t id, const FeedOutcome& outcome);  // 选择确认 + 完整outcome
 
     // --- 戳一戳 ---
     void (*onPokeStart)();                                  // 戳一戳动画开始
@@ -48,7 +48,7 @@ struct UICallbacks {
     void (*onDestroyCancelled)();                           // 销毁已取消
 
     // --- 进化 ---
-    void (*onEvolution)(const EvolutionResult& result);     // 进化事件
+    void (*onEvolution)(const EvolutionResult& result, int16_t srAfter);  // 进化事件 + 当前SR
 
     // --- 通用 ---
     void (*onContextChange)(UIContext from, UIContext to);  // UI上下文切换

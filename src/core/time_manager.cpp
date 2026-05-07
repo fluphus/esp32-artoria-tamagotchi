@@ -1,8 +1,8 @@
 // src/core/time_manager.cpp
+// 时间系统只负责时间状态, display 由 main.cpp / UI 层触发
 
 #include "time_manager.h"
 #include "../config/game_config.h"
-#include "../display/DisplayManager.h"
 #include <Arduino.h>
 
 TimeManager timeManager;
@@ -97,7 +97,6 @@ void TimeManager::advanceMinutes(uint32_t minutes) {
     char buf[24];
     getFormattedFull(buf, sizeof(buf));
     Serial.printf("[Time] Advanced %lu min -> %s\n", minutes, buf);
-    DisplayManager::showTimeAdvanced(minutes);
 }
 
 void TimeManager::advanceDays(uint32_t days) {
@@ -106,7 +105,6 @@ void TimeManager::advanceDays(uint32_t days) {
     char buf[24];
     getFormattedFull(buf, sizeof(buf));
     Serial.printf("[Time] Advanced %lu day(s) -> %s\n", days, buf);
-    DisplayManager::showDayAdvanced(days);
 }
 
 void TimeManager::setSimulatedTime(uint16_t year, uint8_t month, uint8_t day,
@@ -118,7 +116,6 @@ void TimeManager::setSimulatedTime(uint16_t year, uint8_t month, uint8_t day,
     char buf[24];
     getFormattedFull(buf, sizeof(buf));
     Serial.printf("[Time] Set to: %s\n", buf);
-    DisplayManager::showTimeSet();
 }
 
 bool TimeManager::checkNewMinute() {

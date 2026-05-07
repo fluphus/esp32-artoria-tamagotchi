@@ -1,0 +1,90 @@
+// src/display/display_model.h
+// 显示数据模型 - DisplayManager 的 show*() 函数只更新此模型
+// DisplayRenderer 根据此模型绘制屏幕
+
+#ifndef DISPLAY_MODEL_H
+#define DISPLAY_MODEL_H
+
+#include <stdint.h>
+#include <string.h>
+#include "../core/game_state.h"
+#include "../pet/feeding.h"
+#include "../pet/seriousness.h"
+#include "../pet/evolution.h"
+#include "../input/input_map.h"
+
+// ============================================================================
+//  DisplayModel - 当前帧需要显示的所有数据
+// ============================================================================
+
+struct DisplayModel {
+    // --- 宠物快照 ---
+    PetState petSnapshot;
+
+    // --- 投喂流程 ---
+    FeedDraw feedDraw;
+    bool feedSelected[4];
+    uint8_t feedCursor;
+    FeedOutcome feedOutcome;
+    int16_t feedSrAfter;
+
+    // --- 特殊食物 ---
+    uint8_t specialFoodCount;
+    uint8_t specialFoodCursor;
+    uint8_t specialFoodSelectedId;
+    bool mapoTriggered;
+    uint8_t mapoCount;
+    bool mapoCurseActivated;
+
+    // --- 进化 ---
+    EvolutionResult evolution;
+    Form destroyedForm;
+
+    // --- 严肃值变化 ---
+    int16_t srBefore;
+    int16_t srAfter;
+    SeriousnessTier tierBefore;
+    SeriousnessTier tierAfter;
+
+    // --- 戳一戳 ---
+    bool pokeValueChanged;
+    int16_t pokeSrBefore;
+    int16_t pokeSrAfter;
+
+    // --- 日结算 ---
+    struct DayEndData {
+        int16_t idleSrBefore;
+        int16_t idleSrAfter;
+        SeriousnessTier idleTierBefore;
+        SeriousnessTier idleTierAfter;
+        bool windowBonusApplied;
+        int16_t windowBonusHP;
+        bool windowPenaltyApplied;
+        int16_t windowPenaltyHP;
+        bool missedFeedPenalty;
+        uint8_t fedCount;
+        uint8_t feedLimit;
+        uint16_t dayNumber;
+        bool terminalState;
+    } dayEnd;
+
+    // --- 销毁确认 ---
+    uint8_t destroyCursor;          // 0=yes, 1=no
+
+    // --- Toast 消息 ---
+    char toast[64];
+    uint32_t toastUntilMs;
+
+    // --- 时间显示 ---
+    char timeStr[6];                // "HH:MM"
+    char dateStr[6];                // "MM/DD"
+    uint16_t ageDay;
+
+    // --- 初始化 ---
+    void clear() {
+        memset(this, 0, sizeof(DisplayModel));
+        destroyCursor = 1;  // 默认 no
+    }
+};
+
+#endif // DISPLAY_MODEL_H

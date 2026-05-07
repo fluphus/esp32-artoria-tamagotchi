@@ -1,11 +1,15 @@
 // src/display/DisplayManager.h
-// 显示接口层 - 所有面向玩家的视觉反馈统一入口
-// 当前为空实现, 后续接入实际屏幕驱动
+// 显示管理器 - UI 状态机
+// 不直接写绘制代码, 只管理页面/动画状态和 DisplayModel
+// 实际绘制委托给 DisplayRenderer
 
 #ifndef DISPLAY_MANAGER_H
 #define DISPLAY_MANAGER_H
 
 #include <stdint.h>
+#include "display_config.h"
+#include "display_model.h"
+#include "display_renderer.h"
 #include "../core/game_state.h"
 #include "../pet/feeding.h"
 #include "../pet/seriousness.h"
@@ -18,7 +22,8 @@
 // ============================================================================
 
 enum DisplayPage : uint8_t {
-    PAGE_IDLE = 0,              // 待机主界面 (宠物动画)
+    PAGE_BOOT = 0,              // 启动画面
+    PAGE_IDLE,                  // 待机主界面 (宠物动画)
     PAGE_STATUS,                // 状态面板
     PAGE_FEED_DRAW,             // 投喂: 抽卡展示
     PAGE_FEED_PICK,             // 投喂: 选择食物
@@ -28,7 +33,6 @@ enum DisplayPage : uint8_t {
     PAGE_EVOLUTION,             // 进化演出
     PAGE_DESTROY_CONFIRM,       // 销毁确认
     PAGE_DAY_END,               // 日结算展示
-    PAGE_BOOT,                  // 启动画面
     PAGE_COUNT
 };
 
@@ -53,33 +57,39 @@ enum AnimState : uint8_t {
 };
 
 // ============================================================================
-//  DisplayManager 类 (静态方法, 全局调用)
+//  DisplayManager 类 (静态方法, 全局 UI 状态机)
 // ============================================================================
 
 class DisplayManager {
 public:
-    // ==== 页面切换接口 ====
+    // ==== 生命周期 ====
+    static void init();
+    static void update(uint32_t nowMs);
+    static void renderIfDirty();
+
+    // ==== 页面/动画控制 ====
     static void switchPage(DisplayPage page);
     static DisplayPage getCurrentPage();
-
-    // ==== 动画状态接口 ====
-    static void playAnimation(AnimState anim);
+    static void setAnimation(AnimState anim, uint32_t durationMs, UIContext completeContext);
     static void stopAnimation();
     static AnimState getCurrentAnimation();
     static bool isAnimationPlaying();
+    static bool isPageBlockingInput();
 
-    // ==== 系统初始化 ====
+    // ==== 数据更新接口 (show* 函数只更新 model + dirty) ====
+
+    // 系统
     static void showBootScreen();
     static void showSaveLoaded();
     static void showSaveCorruptedNewGame();
     static void showNewGame();
     static void showSystemReady();
 
-    // ==== 状态面板 ====
+    // 状态面板
     static void showStatusPanel(const PetState& pet);
     static void hideStatusPanel();
 
-    // ==== 投喂流程 ====
+    // 投喂流程
     static void showCannotInteract();
     static void showFeedCheckFailed(FeedResult result, uint32_t waitSeconds);
     static void showFeedDraw(const FeedDraw& draw);
@@ -89,23 +99,20 @@ public:
     static void showFeedComboTriggered(ComboType combo);
     static void showFeedCancel();
 
-    // ==== 特殊食物 ====
+    // 特殊食物
     static void showSpecialFoodSelection(uint8_t count);
     static void showSpecialFoodCursor(uint8_t cursor);
-    static void showSpecialFoodConfirm(uint8_t id);
-    static void showSpecialFoodAnimation(uint8_t specialFoodId);
+    static void showSpecialFoodConfirm(uint8_t id, const FeedOutcome& outcome);
 
-    // ==== 麻婆豆腐彩蛋 ====
+    // 麻婆豆腐彩蛋
     static void showMapoTofuTriggered(uint8_t currentCount, uint8_t threshold);
     static void showMapoTofuCurseActivated();
 
-    // ==== 戳一戳 ====
+    // 戳一戳
     static void showPokeAnimation();
     static void showPokeResult(bool valueChanged, int16_t srBefore, int16_t srAfter);
-    static void showPokeCooldown(uint32_t remainingSeconds);
-    static void showPokeIdlePaused(uint32_t pauseMinutes);
 
-    // ==== 日结算 ====
+    // 日结算
     static void showDayEndStart();
     static void showDayEndIdleSR(int16_t srBefore, int16_t srAfter,
                                   SeriousnessTier tierBefore, SeriousnessTier tierAfter);
@@ -116,50 +123,53 @@ public:
     static void showDayEndComplete(uint16_t dayNumber);
     static void showNewDayDetected();
 
-    // ==== 进化系统 ====
+    // 进化系统
     static void showChildGraduation(const EvolutionResult& result, Alignment alignment);
     static void showFormChange(Form formBefore, Form formAfter, int16_t seriousness,
                                SeriousnessTier tier);
-    static void showRhongomyniadTriggered();
-    static void showBlackRhongomyniadTriggered();
-    static void showWhiteFunFormLocked(Form funForm);
-    static void showEvolutionEvent(const EvolutionResult& result);
+    static void showEvolutionEvent(const EvolutionResult& result, int16_t srAfter);
 
-    // ==== 严肃值系统 ====
-    static void showRhongoTimerStarted();
-    static void showRhongoTimerTriggered();
-    static void showRhongoTimerReset(int16_t seriousness, int16_t threshold);
-    static void showMissedFeedPenalty(int16_t srBefore, int16_t srAfter, int16_t penalty);
+    // 严肃值系统
     static void showIdleTierChange(SeriousnessTier tierBefore, SeriousnessTier tierAfter);
     static void showIdleFormChange(Form formBefore, Form formAfter);
     static void showIdleRhongoCountdown(uint32_t remainingHours);
+    static void showMissedFeedPenalty(int16_t srBefore, int16_t srAfter, int16_t penalty);
 
-    // ==== 销毁/重置 ====
+    // 销毁/重置
     static void showDestroyConfirm(uint8_t cursor);
     static void showDestroyCursorMove(uint8_t cursor);
     static void showDestroyExecuted(Form destroyedForm);
     static void showDestroyReset();
     static void showDestroyCancelled();
 
-    // ==== 存档系统 ====
-    static void showSaveSuccess();
-    static void showSaveFailed();
-    static void showLoadSuccess();
-    static void showLoadFailed();
-    static void showSaveErased();
+    // 存档系统
     static void showAutoSave();
 
-    // ==== 时间系统 ====
-    static void showTimeAdvanced(uint32_t minutes);
-    static void showDayAdvanced(uint32_t days);
-    static void showTimeSet();
+    // Toast
+    static void showToast(const char* message, uint32_t durationMs = PAGE_DURATION_TOAST);
 
-    // ==== UI上下文切换 ====
-    static void showContextChange(UIContext from, UIContext to);
+    // 宠物快照更新 (每帧由 main 调用)
+    static void updatePetSnapshot(const PetState& pet);
+
+    // 获取 model (只读, 供外部查询)
+    static const DisplayModel& getModel() { return _model; }
 
 private:
-    static DisplayPage _currentPage;
-    static AnimState _currentAnim;
+    static DisplayPage  _currentPage;
+    static AnimState    _currentAnim;
+    static uint32_t     _pageEnteredMs;
+    static uint32_t     _animStartedMs;
+    static uint32_t     _animDurationMs;
+    static UIContext    _animCompleteContext;    // 动画结束后通知的上下文
+    static bool         _dirty;
+    static DisplayModel _model;
+    static uint32_t     _lastRenderMs;
+
+    // 内部: 标记脏
+    static void markDirty();
+
+    // 内部: 获取动画时长
+    static uint32_t getAnimDuration(AnimState anim);
 };
 
 #endif // DISPLAY_MANAGER_H

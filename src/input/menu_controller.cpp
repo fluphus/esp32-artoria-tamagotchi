@@ -200,11 +200,11 @@ void MenuController::handleSpecialFood(GameInput action) {
                 if (_last_feed_outcome.mapo_tofu_curse_activated) {
                     EvolutionResult eR = evolutionSystem.checkMapoCurse(*_pet);
                     if (eR.event != EVO_NONE) {
-                        safeCallback(_callbacks->onEvolution, eR);
+                        safeCallback(_callbacks->onEvolution, eR, _pet->seriousness);
                     }
                 }
                 _combo_pending = false;
-                safeCallback(_callbacks->onSpecialFoodSelect, _sfood_cursor);
+                safeCallback(_callbacks->onSpecialFoodSelect, _sfood_cursor, _last_feed_outcome);
                 saveManager.save(*_pet);
                 saveManager.markSaved(timeManager.now());
                 switchContext(UI_IDLE);
@@ -271,6 +271,7 @@ void MenuController::startFeed() {
     for (uint8_t i = 0; i < 4; i++) _feed.selected[i] = false;
 
     // 切换到抽卡展示界面 (播放动画)
+    // 动画完成由 DisplayManager 调用 onAnimationComplete(UI_FEED_DRAW)
     switchContext(UI_FEED_DRAW);
     safeCallback(_callbacks->onFeedDrawStart, _feed.draw);
 }
@@ -331,8 +332,8 @@ void MenuController::confirmFeed() {
     // 进化检查
     EvolutionResult eR = evolutionSystem.check(*_pet, now);
 
-    // 通知UI
-    safeCallback(_callbacks->onFeedConfirm, outcome);
+    // 通知UI: 传入最终 seriousness
+    safeCallback(_callbacks->onFeedConfirm, outcome, _pet->seriousness);
 
     // 检查连携
     if (outcome.combo_triggered) {
@@ -351,7 +352,7 @@ void MenuController::confirmFeed() {
 
     // 进化事件
     if (eR.event != EVO_NONE) {
-        safeCallback(_callbacks->onEvolution, eR);
+        safeCallback(_callbacks->onEvolution, eR, _pet->seriousness);
     }
 
     // 存档
@@ -374,6 +375,7 @@ void MenuController::doPoke() {
     uint32_t now = timeManager.now();
 
     // 切换到戳一戳动画
+    // 动画完成由 DisplayManager 调用 onAnimationComplete(UI_POKE_ANIM)
     switchContext(UI_POKE_ANIM);
     safeCallback(_callbacks->onPokeStart);
 
@@ -387,7 +389,7 @@ void MenuController::doPoke() {
     safeCallback(_callbacks->onPokeResult, valueChanged, sR.seriousness_before, sR.seriousness_after);
 
     if (eR.event != EVO_NONE) {
-        safeCallback(_callbacks->onEvolution, eR);
+        safeCallback(_callbacks->onEvolution, eR, _pet->seriousness);
     }
 }
 

@@ -10,35 +10,19 @@
 #include "input/menu_controller.h"
 #include "display/DisplayManager.h"
 
+// ============================================================================
+//  Serial input debug switch (set to 0 to disable serial button commands)
+// ============================================================================
+#ifndef ENABLE_SERIAL_INPUT_DEBUG
+#define ENABLE_SERIAL_INPUT_DEBUG 1
+#endif
+
 static PetState pet;
 static char cmdBuf[64];
 static uint8_t cmdLen = 0;
 
-static FeedDraw currentDraw;
-static bool drawPending = false;
-static FeedOutcome lastFeedOutcome;
-static bool comboPending = false;
-
 // ============================================================================
-//  UIContext -> DisplayPage 映射
-// ============================================================================
-
-static DisplayPage contextToPage(UIContext ctx) {
-    switch (ctx) {
-        case UI_IDLE:            return PAGE_IDLE;
-        case UI_STATUS:          return PAGE_STATUS;
-        case UI_FEED_DRAW:       return PAGE_FEED_DRAW;
-        case UI_FEED_PICK:       return PAGE_FEED_PICK;
-        case UI_SPECIAL_FOOD:    return PAGE_SPECIAL_FOOD;
-        case UI_POKE_ANIM:       return PAGE_POKE_ANIM;
-        case UI_EVOLUTION:       return PAGE_EVOLUTION;
-        case UI_DESTROY_CONFIRM: return PAGE_DESTROY_CONFIRM;
-        default:                 return PAGE_IDLE;
-    }
-}
-
-// ============================================================================
-//  UICallbacks 实现 (串口输出 + DisplayManager 转发)
+//  UICallbacks implementation (updates DisplayManager)
 // ============================================================================
 
 static UICallbacks gameCallbacks = {
@@ -46,34 +30,21 @@ static UICallbacks gameCallbacks = {
     [](const PetState& p) {
         Serial.println("[MC] Status opened");
         DisplayManager::showStatusPanel(p);
-        DisplayManager::switchPage(PAGE_STATUS);
     },
     // onStatusClose
     []() {
         Serial.println("[MC] Status closed");
         DisplayManager::hideStatusPanel();
-        DisplayManager::switchPage(PAGE_IDLE);
     },
     // onFeedDrawStart
     [](const FeedDraw& draw) {
-        Serial.println("[MC] Feed draw started:");
-        for (uint8_t i = 0; i < FEED_DRAW_COUNT; i++) {
-            uint8_t id = draw.food_ids[i];
-            Serial.printf("  [%d] %s %s (%+d)\n", i, FOOD_TABLE[id].name,
-                          FOOD_TABLE[id].is_healthy ? "[H]" : "[J]", FOOD_TABLE[id].health_delta);
-        }
+        Serial.println("[MC] Feed draw started");
         DisplayManager::showFeedDraw(draw);
-        DisplayManager::switchPage(PAGE_FEED_DRAW);
-        DisplayManager::playAnimation(ANIM_EATING);
-        Serial.println("[MC] (auto-advancing to FEED_PICK)");
-        // 模拟动画完成, 直接进入选择
-        menuController.onAnimationComplete(UI_FEED_DRAW);
+        // Animation complete will be triggered by DisplayManager::update()
     },
     // onFeedCursorMove
     [](uint8_t cursor, const bool selected[4]) {
-        Serial.printf("[MC] Feed cursor -> %d  [", cursor);
-        for (uint8_t i = 0; i < 4; i++) Serial.printf("%c", selected[i] ? 'X' : '.');
-        Serial.println("]");
+        Serial.printf("[MC] Feed cursor -> %d\n", cursor);
         DisplayManager::showFeedCursorMove(cursor, selected);
     },
     // onFeedSlotToggle
@@ -81,51 +52,42 @@ static UICallbacks gameCallbacks = {
         Serial.printf("[MC] Feed slot %d %s\n", slot, sel ? "SELECTED" : "DESELECTED");
         DisplayManager::showFeedSlotToggle(slot, sel);
     },
-    // onFeedConfirm
-    [](const FeedOutcome& outcome) {
-        Serial.printf("[MC] Feed confirmed! HP: %d->%d\n", outcome.health_before, outcome.health_after);
+    // onFeedConfirm (new signature: outcome + srAfter)
+    [](const FeedOutcome& outcome, int16_t srAfter) {
+        Serial.printf("[MC] Feed confirmed! HP: %d->%d  SR after: %d\n",
+            outcome.health_before, outcome.health_after, srAfter);
         if (outcome.combo_triggered)
             Serial.printf("[MC] *** COMBO: %s ***\n", COMBO_NAMES[outcome.combo]);
-        DisplayManager::showFeedResult(outcome, outcome.seriousness_after);
-        DisplayManager::switchPage(PAGE_FEED_RESULT);
+        DisplayManager::showFeedResult(outcome, srAfter);
         if (outcome.combo_triggered) {
             DisplayManager::showFeedComboTriggered(outcome.combo);
-            DisplayManager::playAnimation(ANIM_COMBO);
         }
     },
     // onFeedCancel
     []() {
         Serial.println("[MC] Feed cancelled");
         DisplayManager::showFeedCancel();
-        DisplayManager::switchPage(PAGE_IDLE);
     },
     // onSpecialFoodShow
     [](uint8_t count) {
-        Serial.printf("[MC] Special food selection (%d items):\n", count);
-        for (uint8_t i = 0; i < count; i++)
-            Serial.printf("  %d: %s\n", i, SPECIAL_FOOD_TABLE[i].name);
+        Serial.printf("[MC] Special food selection (%d items)\n", count);
         DisplayManager::showSpecialFoodSelection(count);
-        DisplayManager::switchPage(PAGE_SPECIAL_FOOD);
     },
     // onSpecialFoodCursor
     [](uint8_t cursor) {
         Serial.printf("[MC] Special food cursor -> %d\n", cursor);
         DisplayManager::showSpecialFoodCursor(cursor);
     },
-    // onSpecialFoodSelect
-    [](uint8_t id) {
+    // onSpecialFoodSelect (new signature: id + full outcome)
+    [](uint8_t id, const FeedOutcome& outcome) {
         Serial.printf("[MC] Special food selected: %d (%s)\n", id, SPECIAL_FOOD_TABLE[id].name);
-        DisplayManager::showSpecialFoodConfirm(id);
-        DisplayManager::showSpecialFoodAnimation(id);
+        DisplayManager::showSpecialFoodConfirm(id, outcome);
     },
     // onPokeStart
     []() {
         Serial.println("[MC] Poke animation started");
         DisplayManager::showPokeAnimation();
-        DisplayManager::playAnimation(ANIM_POKE);
-        DisplayManager::switchPage(PAGE_POKE_ANIM);
-        // 模拟动画完成
-        menuController.onAnimationComplete(UI_POKE_ANIM);
+        // Animation complete will be triggered by DisplayManager::update()
     },
     // onPokeResult
     [](bool valueChanged, int16_t srBefore, int16_t srAfter) {
@@ -137,9 +99,8 @@ static UICallbacks gameCallbacks = {
     },
     // onDestroyConfirmShow
     [](uint8_t cursor) {
-        Serial.printf("[MC] Destroy confirm shown (cursor=%d, 0=yes 1=no)\n", cursor);
+        Serial.printf("[MC] Destroy confirm shown (cursor=%d)\n", cursor);
         DisplayManager::showDestroyConfirm(cursor);
-        DisplayManager::switchPage(PAGE_DESTROY_CONFIRM);
     },
     // onDestroyCursorMove
     [](uint8_t cursor) {
@@ -150,51 +111,27 @@ static UICallbacks gameCallbacks = {
     [](Form destroyedForm) {
         Serial.println("[MC] *** DESTROYED ***");
         DisplayManager::showDestroyExecuted(destroyedForm);
-        DisplayManager::playAnimation(ANIM_DESTROY);
-        DisplayManager::showDestroyReset();
-        DisplayManager::switchPage(PAGE_IDLE);
     },
     // onDestroyCancelled
     []() {
         Serial.println("[MC] Destroy cancelled");
         DisplayManager::showDestroyCancelled();
-        DisplayManager::switchPage(PAGE_IDLE);
     },
-    // onEvolution
-    [](const EvolutionResult& r) {
-        Serial.printf("[MC] Evolution: %s -> %s\n", FORM_NAMES[r.form_before], FORM_NAMES[r.form_after]);
-        DisplayManager::showEvolutionEvent(r);
-        if (r.event == EVO_FORM_CHANGED)
-            DisplayManager::showFormChange(r.form_before, r.form_after, 0, r.tier);
-        else if (r.event == EVO_RHONGOMYNIAD) {
-            DisplayManager::showRhongomyniadTriggered();
-            DisplayManager::playAnimation(ANIM_RHONGOMYNIAD);
-        } else if (r.event == EVO_BLACK_RHONGOMYNIAD) {
-            DisplayManager::showBlackRhongomyniadTriggered();
-            DisplayManager::playAnimation(ANIM_BLACK_RHONGOMYNIAD);
-        } else if (r.event == EVO_CHILD_TO_WHITE || r.event == EVO_CHILD_TO_BLACK) {
-            DisplayManager::playAnimation(ANIM_EVOLUTION);
-        }
-        DisplayManager::switchPage(PAGE_EVOLUTION);
+    // onEvolution (new signature: result + srAfter)
+    [](const EvolutionResult& r, int16_t srAfter) {
+        Serial.printf("[MC] Evolution: %s -> %s (SR=%d)\n",
+            FORM_NAMES[r.form_before], FORM_NAMES[r.form_after], srAfter);
+        DisplayManager::showEvolutionEvent(r, srAfter);
     },
     // onContextChange
     [](UIContext from, UIContext to) {
         Serial.printf("[MC] Context: %s -> %s\n", UI_CONTEXT_NAMES[from], UI_CONTEXT_NAMES[to]);
-        DisplayManager::showContextChange(from, to);
-        // 同步 DisplayPage (仅对直接映射的上下文)
-        // 注意: 某些回调已经手动切换了页面, 这里作为兜底
-        DisplayPage targetPage = contextToPage(to);
-        DisplayPage currentPage = DisplayManager::getCurrentPage();
-        // 避免覆盖回调中已设置的更精确页面 (如 PAGE_FEED_RESULT)
-        if (currentPage != targetPage) {
-            // 只在上下文切换到 IDLE 时强制同步, 其他由具体回调管理
-            if (to == UI_IDLE) {
-                DisplayManager::switchPage(PAGE_IDLE);
-                DisplayManager::stopAnimation();
-            }
-        }
     }
 };
+
+// ============================================================================
+//  Serial command processing
+// ============================================================================
 
 void printStatus() {
     char timeBuf[24];
@@ -254,34 +191,13 @@ void printStatus() {
     const char* wN[] = {"Breakfast", "Lunch", "Dinner"};
     if (wIdx >= 0) Serial.printf("  Window:     %s\n", wN[wIdx]);
     else Serial.println("  Window:     None");
-    Serial.printf("  Feed stats: win[H=%d J=%d] out[H=%d J=%d]\n",
-                  pet.daily_feed.healthy_in_window,
-                  pet.daily_feed.junk_in_window,
-                  pet.daily_feed.healthy_outside_window,
-                  pet.daily_feed.junk_outside_window);
     Serial.println("========================================");
-
-}
-
-void printFoodList() {
-    Serial.println("--- Normal Food ---");
-    for (uint8_t i = 0; i < FOOD_COUNT; i++)
-        Serial.printf("  %d: %-16s %s (%+d hp)\n", i, FOOD_TABLE[i].name,
-                      FOOD_TABLE[i].is_healthy ? "[H]" : "[J]", FOOD_TABLE[i].health_delta);
-    Serial.println("--- Special Food (combo reward) ---");
-    for (uint8_t i = 0; i < SFOOD_COUNT; i++)
-        Serial.printf("  %d: %-16s %s\n", i, SPECIAL_FOOD_TABLE[i].name,
-                      SPECIAL_FOOD_TABLE[i].description);
-    Serial.printf("--- Curse: %s ---\n", MAPO_TOFU.name);
 }
 
 void printHelp() {
     Serial.println("=== Fate Tamagotchi Console ===");
     Serial.println("  s              Status");
     Serial.println("  fl             Food list");
-    Serial.println("  f              Start feed (draw 4)");
-    Serial.println("  pick a b c     Pick 3 (slot 0-3)");
-    Serial.println("  sf <id>        Special food (combo)");
     Serial.println("  p              Poke");
     Serial.println("  t <min>        Advance N minutes");
     Serial.println("  d              Advance 1 day");
@@ -291,162 +207,31 @@ void printHelp() {
     Serial.println("  hp/sr/age <val>  Debug set");
     Serial.println("  grad           Force graduation");
     Serial.println("  mapo           Debug +1 mapo count");
+#if ENABLE_SERIAL_INPUT_DEBUG
     Serial.println("--- Button Simulation ---");
     Serial.println("  btn l|m|r      Simulate short press");
     Serial.println("  btnl l|m|r     Simulate long press");
     Serial.println("  btnr l|m|r     Simulate repeat");
     Serial.println("  ctx            Show current UI context");
+#endif
     Serial.println("  h              Help");
     Serial.println("===============================");
 }
 
-void doFeedDraw() {
-    if (!evolutionSystem.canInteract(pet)) { Serial.println("[Feed] Cannot interact."); DisplayManager::showCannotInteract(); return; }
-    uint32_t now = timeManager.now();
-    FeedResult check = feedingSystem.canFeed(pet, now);
-    if (check != FEED_OK) {
-        Serial.printf("[Feed] %s\n", FEED_RESULT_NAMES[check]);
-        if (check == FEED_ERR_TOO_SOON)
-            Serial.printf("[Feed] Wait %lus\n", feedingSystem.secondsUntilNextFeed(pet, now));
-        DisplayManager::showFeedCheckFailed(check, feedingSystem.secondsUntilNextFeed(pet, now));
-        return;
-    }
-    currentDraw = feedingSystem.drawFood();
-    drawPending = true;
-    comboPending = false;
-    Serial.println("[Feed] === DRAWN 4 FOODS ===");
-    for (uint8_t i = 0; i < FEED_DRAW_COUNT; i++) {
-        uint8_t id = currentDraw.food_ids[i];
-        Serial.printf("  [%d] %s %s (%+d)\n", i, FOOD_TABLE[id].name,
-                      FOOD_TABLE[id].is_healthy ? "[H]" : "[J]", FOOD_TABLE[id].health_delta);
-    }
-    Serial.println("[Feed] Use 'pick a b c'");
-    DisplayManager::showFeedDraw(currentDraw);
-    DisplayManager::switchPage(PAGE_FEED_DRAW);
-    DisplayManager::playAnimation(ANIM_EATING);
-}
-
-void doFeedPick(uint8_t slotA, uint8_t slotB, uint8_t slotC) {
-    if (!drawPending) { Serial.println("[Feed] No draw. Use 'f'."); return; }
-    if (slotA > 3 || slotB > 3 || slotC > 3) { Serial.println("[Feed] Slot 0-3."); return; }
-    if (slotA == slotB || slotA == slotC || slotB == slotC) { Serial.println("[Feed] No dupes."); return; }
-    uint8_t picked[3] = { currentDraw.food_ids[slotA], currentDraw.food_ids[slotB], currentDraw.food_ids[slotC] };
-    uint32_t now = timeManager.now();
-    uint8_t hour = timeManager.getHour();
-    FeedOutcome fR = feedingSystem.feed(pet, picked, now, hour);
-    if (fR.result != FEED_OK) { Serial.printf("[Feed] FAILED: %s\n", FEED_RESULT_NAMES[fR.result]); drawPending = false; return; }
-    InteractResult sR = seriousnessSystem.onInteract(pet, INTERACT_FEED, now);
-    EvolutionResult eR = evolutionSystem.check(pet, now);
-    Serial.println("[Feed] === RESULT ===");
-    for (uint8_t i = 0; i < FEED_PICK_COUNT; i++)
-        Serial.printf("  %s (%+d)\n", FOOD_TABLE[picked[i]].name, FOOD_TABLE[picked[i]].health_delta);
-    Serial.printf("[Feed] HP: %d->%d (food %+d", fR.health_before, fR.health_after, fR.health_from_food);
-    if (fR.health_from_combo != 0) Serial.printf(", combo %+d", fR.health_from_combo);
-    Serial.println(")");
-    Serial.printf("[Feed] SR: %d->%d (interact %+d", fR.seriousness_before, pet.seriousness, sR.seriousness_after - sR.seriousness_before);
-    if (fR.seriousness_from_dislike != 0) Serial.printf(", dislike %+d", fR.seriousness_from_dislike);
-    if (fR.seriousness_from_combo != 0) Serial.printf(", combo %+d", fR.seriousness_from_combo);
-    Serial.println(")");
-    Serial.printf("[Feed] Window: %s | %d/%d\n", fR.in_correct_window ? "YES" : "no", pet.daily_feed.feed_count, DAILY_FEED_LIMIT);
-    DisplayManager::showFeedResult(fR, pet.seriousness);
-    DisplayManager::switchPage(PAGE_FEED_RESULT);
-    if (fR.combo_triggered) {
-        Serial.printf("[Feed] *** COMBO: %s ***\n", COMBO_NAMES[fR.combo]);
-        Serial.println("[Feed] Use 'sf <id>' for special food.");
-        for (uint8_t i = 0; i < SFOOD_COUNT; i++)
-            Serial.printf("  %d: %s\n", i, SPECIAL_FOOD_TABLE[i].name);
-        lastFeedOutcome = fR;
-        comboPending = true;
-        DisplayManager::showFeedComboTriggered(fR.combo);
-        DisplayManager::playAnimation(ANIM_COMBO);
-    }
-    if (sR.tier_changed) Serial.printf("[Feed] Tier: %s -> %s\n", TIER_NAMES[sR.tier_before], TIER_NAMES[sR.tier_after]);
-    if (eR.event == EVO_FORM_CHANGED) Serial.printf("[Feed] Form: %s -> %s\n", FORM_NAMES[eR.form_before], FORM_NAMES[eR.form_after]);
-    if (eR.event == EVO_RHONGOMYNIAD) Serial.println("[Feed] *** RHONGOMYNIAD ***");
-    if (eR.event == EVO_BLACK_RHONGOMYNIAD) Serial.println("[Feed] *** BLACK RHONGOMYNIAD ***");
-    if (eR.event == EVO_FORM_CHANGED) DisplayManager::showFormChange(eR.form_before, eR.form_after, pet.seriousness, seriousnessSystem.getCurrentTier(pet));
-    if (eR.event == EVO_RHONGOMYNIAD) {
-        DisplayManager::showRhongomyniadTriggered();
-        DisplayManager::playAnimation(ANIM_RHONGOMYNIAD);
-        DisplayManager::switchPage(PAGE_EVOLUTION);
-    }
-    if (eR.event == EVO_BLACK_RHONGOMYNIAD) {
-        DisplayManager::showBlackRhongomyniadTriggered();
-        DisplayManager::playAnimation(ANIM_BLACK_RHONGOMYNIAD);
-        DisplayManager::switchPage(PAGE_EVOLUTION);
-    }
-    drawPending = false;
-    saveManager.save(pet);
-    saveManager.markSaved(now);
-}
-
-void doSpecialFood(uint8_t sfId) {
-    if (!comboPending) { Serial.println("[Feed] No combo pending."); return; }
-    if (sfId >= SFOOD_COUNT) { Serial.printf("[Feed] Invalid (0-%d).\n", SFOOD_COUNT - 1); return; }
-    DisplayManager::showSpecialFoodConfirm(sfId);
-    DisplayManager::switchPage(PAGE_SPECIAL_FOOD);
-    feedingSystem.applySpecialFood(pet, lastFeedOutcome, sfId);
-    DisplayManager::showSpecialFoodAnimation(sfId);
-    if (lastFeedOutcome.mapo_tofu_triggered) {
-        DisplayManager::showMapoTofuTriggered(lastFeedOutcome.mapo_tofu_total, MAPO_TOFU_CURSE_THRESHOLD);
-        DisplayManager::playAnimation(ANIM_MAPO_TOFU);
-        if (lastFeedOutcome.mapo_tofu_curse_activated) {
-            DisplayManager::showMapoTofuCurseActivated();
-            EvolutionResult eR = evolutionSystem.checkMapoCurse(pet);
-            if (eR.event == EVO_BLACK_RHONGOMYNIAD) {
-                DisplayManager::showBlackRhongomyniadTriggered();
-                DisplayManager::playAnimation(ANIM_BLACK_RHONGOMYNIAD);
-                DisplayManager::switchPage(PAGE_EVOLUTION);
-                saveManager.save(pet);
-                saveManager.markSaved(timeManager.now());
-            }
-        }
-    }
-    comboPending = false;
-}
-
-void doPoke() {
-    if (!evolutionSystem.canInteract(pet)) { Serial.println("[Poke] Cannot interact."); DisplayManager::showCannotInteract(); return; }
-    uint32_t now = timeManager.now();
-    InteractResult sR = seriousnessSystem.onInteract(pet, INTERACT_POKE, now);
-    EvolutionResult eR = evolutionSystem.check(pet, now);
-    bool valueChanged = (sR.seriousness_before != sR.seriousness_after);
-    if (valueChanged)
-        Serial.printf("[Poke] SR: %d->%d | %s\n", sR.seriousness_before, sR.seriousness_after, TIER_NAMES[sR.tier_after]);
-    else
-        Serial.printf("[Poke] Cooldown active (%ds remaining, animation only)\n",
-                      POKE_COOLDOWN_SEC - (now - pet.last_poke_effect_time));
-    Serial.printf("[Poke] Idle growth paused for %d min.\n", POKE_IDLE_PAUSE_SEC / 60);
-    DisplayManager::showPokeAnimation();
-    DisplayManager::playAnimation(ANIM_POKE);
-    DisplayManager::showPokeResult(valueChanged, sR.seriousness_before, sR.seriousness_after);
-    if (!valueChanged)
-        DisplayManager::showPokeCooldown(POKE_COOLDOWN_SEC - (now - pet.last_poke_effect_time));
-    DisplayManager::showPokeIdlePaused(POKE_IDLE_PAUSE_SEC / 60);
-    if (sR.tier_changed) Serial.printf("[Poke] Tier: %s -> %s\n", TIER_NAMES[sR.tier_before], TIER_NAMES[sR.tier_after]);
-    if (eR.event == EVO_FORM_CHANGED) Serial.printf("[Poke] Form: %s -> %s\n", FORM_NAMES[eR.form_before], FORM_NAMES[eR.form_after]);
-    if (sR.tier_changed) DisplayManager::showIdleTierChange(sR.tier_before, sR.tier_after);
-    if (eR.event == EVO_FORM_CHANGED) DisplayManager::showFormChange(eR.form_before, eR.form_after, pet.seriousness, seriousnessSystem.getCurrentTier(pet));
-}
-
-
 void doDayEnd() {
     Serial.println("[DayEnd] --- Processing ---");
     DisplayManager::showDayEndStart();
-    DisplayManager::switchPage(PAGE_DAY_END);
-    DisplayManager::playAnimation(ANIM_DAY_END);
     uint32_t now = timeManager.now();
 
-    // 推进一天的待机严肃值 (1440分钟)
     IdleTickResult iR = seriousnessSystem.onIdleBatch(pet, 1440, now);
-    if (iR.tier_changed)
+    if (iR.tier_changed) {
         Serial.printf("[DayEnd] Idle SR: %d->%d | Tier: %s -> %s\n",
                       iR.seriousness_before, iR.seriousness_after,
                       TIER_NAMES[iR.tier_before], TIER_NAMES[iR.tier_after]);
-    if (iR.tier_changed)
-        DisplayManager::showDayEndIdleSR(iR.seriousness_before, iR.seriousness_after, iR.tier_before, iR.tier_after);
+        DisplayManager::showDayEndIdleSR(iR.seriousness_before, iR.seriousness_after,
+                                          iR.tier_before, iR.tier_after);
+    }
 
-    // 检查是否在待机过程中触发了狮子王
     if (pet.is_rhongomyniad || pet.is_black_rhongomyniad) {
         Serial.println("[DayEnd] Terminal state reached during idle.");
         DisplayManager::showDayEndTerminalState();
@@ -458,14 +243,14 @@ void doDayEnd() {
     }
 
     DayEndOutcome fO = feedingSystem.processDayEnd(pet);
-    if (fO.window_bonus_applied)
+    if (fO.window_bonus_applied) {
         Serial.printf("[DayEnd] Window bonus +%d HP\n", CORRECT_WINDOW_BONUS);
-    if (fO.window_bonus_applied)
         DisplayManager::showDayEndWindowBonus(CORRECT_WINDOW_BONUS);
-    if (fO.window_penalty_applied)
+    }
+    if (fO.window_penalty_applied) {
         Serial.printf("[DayEnd] Window penalty -%d HP\n", WRONG_WINDOW_PENALTY);
-    if (fO.window_penalty_applied)
         DisplayManager::showDayEndWindowPenalty(WRONG_WINDOW_PENALTY);
+    }
     if (fO.missed_feed_penalty) {
         int16_t srBefore = pet.seriousness;
         seriousnessSystem.applyMissedFeedPenalty(pet);
@@ -480,55 +265,31 @@ void doDayEnd() {
     EvolutionResult evo = evolutionSystem.checkChildGraduation(pet);
     if (evo.event == EVO_CHILD_TO_WHITE || evo.event == EVO_CHILD_TO_BLACK) {
         DisplayManager::showChildGraduation(evo, pet.alignment);
-        DisplayManager::playAnimation(ANIM_EVOLUTION);
-        DisplayManager::switchPage(PAGE_EVOLUTION);
     }
     if (evo.event == EVO_NONE && pet.stage == STAGE_ADULT)
         evo = evolutionSystem.check(pet, now);
-    if (evo.event != EVO_NONE)
+    if (evo.event != EVO_NONE) {
         Serial.printf("[DayEnd] Evo: %s\n", EVO_EVENT_NAMES[evo.event]);
-    if (evo.event != EVO_NONE)
-        DisplayManager::showEvolutionEvent(evo);
+        DisplayManager::showEvolutionEvent(evo, pet.seriousness);
+    }
 
     feedingSystem.resetDaily(pet, timeManager.getDay());
     Serial.printf("[DayEnd] Day %d done.\n", pet.age_days);
     DisplayManager::showDayEndComplete(pet.age_days);
 
-    drawPending = false;
-    comboPending = false;
     saveManager.save(pet);
     saveManager.markSaved(now);
 }
-
 
 void doReset() {
     uint32_t now = timeManager.now();
     Form destroyedForm = pet.form;
     DisplayManager::showDestroyExecuted(destroyedForm);
-    DisplayManager::playAnimation(ANIM_DESTROY);
     evolutionSystem.destroy(pet, now);
     feedingSystem.resetDaily(pet, timeManager.getDay());
-    drawPending = false;
-    comboPending = false;
     SaveResult r = saveManager.save(pet);
     if (r == SAVE_OK) saveManager.markSaved(now);
     DisplayManager::showDestroyReset();
-    DisplayManager::switchPage(PAGE_IDLE);
-    printStatus();
-}
-
-void doForceGrad() {
-    if (pet.stage != STAGE_CHILD) { Serial.println("[Debug] Already adult."); return; }
-    pet.age_days = CHILD_PERIOD_DAYS;
-    EvolutionResult r = evolutionSystem.checkChildGraduation(pet);
-    Serial.printf("[Debug] Grad: %s\n", EVO_EVENT_NAMES[r.event]);
-    if (r.event == EVO_CHILD_TO_WHITE || r.event == EVO_CHILD_TO_BLACK) {
-        DisplayManager::showChildGraduation(r, pet.alignment);
-        DisplayManager::playAnimation(ANIM_EVOLUTION);
-        DisplayManager::switchPage(PAGE_EVOLUTION);
-    }
-    EvolutionResult r2 = evolutionSystem.check(pet, timeManager.now());
-    if (r2.event != EVO_NONE) Serial.printf("[Debug] Form: %s\n", FORM_NAMES[r2.form_after]);
     printStatus();
 }
 
@@ -538,39 +299,67 @@ void processCommand(const char* cmd) {
 
     if (strcmp(cmd, "s") == 0) { printStatus(); return; }
     if (strcmp(cmd, "h") == 0) { printHelp(); return; }
-    if (strcmp(cmd, "fl") == 0) { printFoodList(); return; }
-    if (strcmp(cmd, "f") == 0) { doFeedDraw(); return; }
-    if (strcmp(cmd, "p") == 0) { doPoke(); return; }
+    if (strcmp(cmd, "fl") == 0) {
+        Serial.println("--- Normal Food ---");
+        for (uint8_t i = 0; i < FOOD_COUNT; i++)
+            Serial.printf("  %d: %-16s %s (%+d hp)\n", i, FOOD_TABLE[i].name,
+                          FOOD_TABLE[i].is_healthy ? "[H]" : "[J]", FOOD_TABLE[i].health_delta);
+        Serial.println("--- Special Food ---");
+        for (uint8_t i = 0; i < SFOOD_COUNT; i++)
+            Serial.printf("  %d: %-16s %s\n", i, SPECIAL_FOOD_TABLE[i].name,
+                          SPECIAL_FOOD_TABLE[i].description);
+        return;
+    }
     if (strcmp(cmd, "d") == 0) {
         doDayEnd();
         timeManager.advanceDays(1);
-        DisplayManager::showDayAdvanced(1);
+        DisplayManager::showToast("Day advanced", 1000);
         timeManager.checkNewDay();
         return;
     }
-
     if (strcmp(cmd, "save") == 0) {
         SaveResult r = saveManager.save(pet);
         if (r == SAVE_OK) {
             saveManager.markSaved(timeManager.now());
             Serial.println("[Save] OK");
-            DisplayManager::showSaveSuccess();
+            DisplayManager::showToast("Saved", 1000);
         } else {
             Serial.println("[Save] FAILED");
-            DisplayManager::showSaveFailed();
+            DisplayManager::showToast("Save failed!", 2000);
         }
         return;
     }
     if (strcmp(cmd, "load") == 0) {
-        if (saveManager.load(pet) == SAVE_OK) { Serial.println("[Load] OK"); DisplayManager::showLoadSuccess(); printStatus(); }
-        else { Serial.println("[Load] FAILED"); DisplayManager::showLoadFailed(); }
+        if (saveManager.load(pet) == SAVE_OK) {
+            Serial.println("[Load] OK");
+            DisplayManager::showToast("Loaded", 1000);
+            printStatus();
+        } else {
+            Serial.println("[Load] FAILED");
+            DisplayManager::showToast("Load failed!", 2000);
+        }
         return;
     }
-    if (strcmp(cmd, "erase") == 0) { saveManager.erase(); Serial.println("[Save] Erased"); DisplayManager::showSaveErased(); return; }
+    if (strcmp(cmd, "erase") == 0) {
+        saveManager.erase();
+        Serial.println("[Save] Erased");
+        DisplayManager::showToast("Save erased", 1500);
+        return;
+    }
     if (strcmp(cmd, "reset") == 0) { doReset(); return; }
-    if (strcmp(cmd, "grad") == 0) { doForceGrad(); return; }
-
-    // mapo - 调试: 麻婆豆腐计数+1
+    if (strcmp(cmd, "grad") == 0) {
+        if (pet.stage != STAGE_CHILD) { Serial.println("[Debug] Already adult."); return; }
+        pet.age_days = CHILD_PERIOD_DAYS;
+        EvolutionResult r = evolutionSystem.checkChildGraduation(pet);
+        Serial.printf("[Debug] Grad: %s\n", EVO_EVENT_NAMES[r.event]);
+        if (r.event == EVO_CHILD_TO_WHITE || r.event == EVO_CHILD_TO_BLACK) {
+            DisplayManager::showChildGraduation(r, pet.alignment);
+        }
+        EvolutionResult r2 = evolutionSystem.check(pet, timeManager.now());
+        if (r2.event != EVO_NONE) Serial.printf("[Debug] Form: %s\n", FORM_NAMES[r2.form_after]);
+        printStatus();
+        return;
+    }
     if (strcmp(cmd, "mapo") == 0) {
         pet.mapo_tofu_count++;
         Serial.printf("[Debug] Mapo Tofu: %d / %d\n", pet.mapo_tofu_count, MAPO_TOFU_CURSE_THRESHOLD);
@@ -578,9 +367,7 @@ void processCommand(const char* cmd) {
         if (pet.mapo_tofu_count >= MAPO_TOFU_CURSE_THRESHOLD) {
             EvolutionResult eR = evolutionSystem.checkMapoCurse(pet);
             if (eR.event == EVO_BLACK_RHONGOMYNIAD) {
-                DisplayManager::showBlackRhongomyniadTriggered();
-                DisplayManager::playAnimation(ANIM_BLACK_RHONGOMYNIAD);
-                DisplayManager::switchPage(PAGE_EVOLUTION);
+                DisplayManager::showEvolutionEvent(eR, pet.seriousness);
                 saveManager.save(pet);
                 saveManager.markSaved(timeManager.now());
             }
@@ -588,46 +375,24 @@ void processCommand(const char* cmd) {
         return;
     }
 
-    // pick a b c
-    if (strncmp(cmd, "pick ", 5) == 0) {
-        int a, b, c;
-        if (sscanf(cmd + 5, "%d %d %d", &a, &b, &c) == 3)
-            doFeedPick((uint8_t)a, (uint8_t)b, (uint8_t)c);
-        else Serial.println("[Feed] Usage: pick 0 1 2");
-        return;
-    }
-
-    // sf <id>
-    if (strncmp(cmd, "sf ", 3) == 0) { doSpecialFood((uint8_t)atoi(cmd + 3)); return; }
-
     // t <min>
     if (cmd[0] == 't' && cmd[1] == ' ') {
         int minutes = atoi(cmd + 2);
         if (minutes > 0) {
             timeManager.advanceMinutes(minutes);
-            DisplayManager::showTimeAdvanced((uint32_t)minutes);
+            DisplayManager::showToast("Time advanced", 1000);
             uint32_t now = timeManager.now();
             IdleTickResult iR = seriousnessSystem.onIdleBatch(pet, (uint32_t)minutes, now);
             Serial.printf("[Idle] SR: %d->%d (+%dm)\n", iR.seriousness_before, iR.seriousness_after, minutes);
-            if (iR.tier_changed)
+            if (iR.tier_changed) {
                 Serial.printf("[Idle] Tier: %s -> %s\n", TIER_NAMES[iR.tier_before], TIER_NAMES[iR.tier_after]);
-            if (iR.tier_changed)
                 DisplayManager::showIdleTierChange(iR.tier_before, iR.tier_after);
-            EvolutionResult eR = evolutionSystem.check(pet, now);
-            if (eR.event == EVO_FORM_CHANGED)
-                Serial.printf("[Idle] Form: %s -> %s\n", FORM_NAMES[eR.form_before], FORM_NAMES[eR.form_after]);
-            if (eR.event == EVO_FORM_CHANGED)
-                DisplayManager::showIdleFormChange(eR.form_before, eR.form_after);
-            if (eR.event == EVO_RHONGOMYNIAD) Serial.println("[Idle] *** RHONGOMYNIAD ***");
-            if (eR.event == EVO_RHONGOMYNIAD) {
-                DisplayManager::showRhongomyniadTriggered();
-                DisplayManager::playAnimation(ANIM_RHONGOMYNIAD);
-                DisplayManager::switchPage(PAGE_EVOLUTION);
             }
-            if (iR.rhongo_state == RHONGO_COUNTING)
-                Serial.printf("[Idle] Rhongo: %luh left\n", iR.rhongo_remaining_sec / 3600);
-            if (iR.rhongo_state == RHONGO_COUNTING)
-                DisplayManager::showIdleRhongoCountdown(iR.rhongo_remaining_sec / 3600);
+            EvolutionResult eR = evolutionSystem.check(pet, now);
+            if (eR.event != EVO_NONE) {
+                Serial.printf("[Idle] Evo: %s\n", EVO_EVENT_NAMES[eR.event]);
+                DisplayManager::showEvolutionEvent(eR, pet.seriousness);
+            }
         } else Serial.println("[Time] Invalid");
         return;
     }
@@ -637,7 +402,7 @@ void processCommand(const char* cmd) {
         int y, mo, da, h, mi;
         if (sscanf(cmd + 6, "%d %d %d %d %d", &y, &mo, &da, &h, &mi) == 5) {
             timeManager.setSimulatedTime(y, mo, da, h, mi);
-            DisplayManager::showTimeSet();
+            DisplayManager::showToast("Time set", 1000);
         }
         else Serial.println("[Time] Usage: stime YYYY MM DD HH mm");
         return;
@@ -678,12 +443,9 @@ void processCommand(const char* cmd) {
     }
 
     // ========================================================================
-    //  模拟按键注入 (调试用, 绕过GPIO)
-    //  btn l / btn m / btn r       - 模拟短按
-    //  btnl l / btnl m / btnl r    - 模拟长按
-    //  btnr l / btnr m / btnr r    - 模拟连按(repeat)
-    //  ctx                         - 显示当前UI上下文
+    //  Button simulation (serial debug, guarded by macro)
     // ========================================================================
+#if ENABLE_SERIAL_INPUT_DEBUG
     if (strcmp(cmd, "ctx") == 0) {
         Serial.printf("[MC] Context: %s\n", UI_CONTEXT_NAMES[menuController.getCurrentContext()]);
         return;
@@ -724,6 +486,7 @@ void processCommand(const char* cmd) {
         menuController.injectButton(btn_id, BTN_EVENT_REPEAT);
         return;
     }
+#endif
 
     Serial.printf("[Cmd] Unknown: '%s'\n", cmd);
 }
@@ -739,40 +502,60 @@ void readSerialCommand() {
     }
 }
 
+// ============================================================================
+//  Setup & Loop
+// ============================================================================
+
 void setup() {
     Serial.begin(115200);
     delay(1000);
     Serial.println();
     Serial.println("================================");
     Serial.println("  Fate Tamagotchi");
-    Serial.println("  Full Game Logic");
+    Serial.println("  Full Game Logic + Display");
     Serial.println("================================");
-    DisplayManager::showBootScreen();
+
+    // Initialize display first
+    DisplayManager::init();
+
     timeManager.init();
     saveManager.init();
     if (saveManager.hasSave()) {
-        if (saveManager.load(pet) == SAVE_OK) { Serial.println("[Main] Save loaded"); DisplayManager::showSaveLoaded(); }
-        else { Serial.println("[Main] Save corrupted, new game"); DisplayManager::showSaveCorruptedNewGame(); pet.initNew(timeManager.now()); }
+        if (saveManager.load(pet) == SAVE_OK) {
+            Serial.println("[Main] Save loaded");
+            DisplayManager::showSaveLoaded();
+        } else {
+            Serial.println("[Main] Save corrupted, new game");
+            DisplayManager::showSaveCorruptedNewGame();
+            pet.initNew(timeManager.now());
+        }
     } else {
         Serial.println("[Main] New game");
         DisplayManager::showNewGame();
         pet.initNew(timeManager.now());
     }
+
+    menuController.init(&pet, &gameCallbacks);
+    Serial.println("[Main] MenuController initialized");
+
     printHelp();
     printStatus();
-    menuController.init(&pet, &gameCallbacks);
-    Serial.println("[Main] MenuController initialized (btn/btnl/btnr commands ready)");
-    Serial.println("\nReady.\n> ");
+
     DisplayManager::showSystemReady();
-    DisplayManager::switchPage(PAGE_IDLE);
+    Serial.println("\nReady.\n> ");
 }
 
 void loop() {
+    // 1. Serial commands
     readSerialCommand();
+
+    // 2. MenuController (processes button input -> game actions)
     menuController.update();
+
+    // 3. Time-based game logic
     uint32_t now = timeManager.now();
 
-    // 每分钟 idle tick: 严肃值增长 + 狮子王计时
+    // Idle tick: seriousness growth + rhongo timer
     if (timeManager.checkNewMinute()) {
         if (!pet.is_rhongomyniad && !pet.is_black_rhongomyniad) {
             IdleTickResult iR = seriousnessSystem.onIdleTick(pet, now);
@@ -780,33 +563,33 @@ void loop() {
                 Serial.printf("[Idle] Tier: %s -> %s\n", TIER_NAMES[iR.tier_before], TIER_NAMES[iR.tier_after]);
                 DisplayManager::showIdleTierChange(iR.tier_before, iR.tier_after);
                 EvolutionResult eR = evolutionSystem.check(pet, now);
-                if (eR.event == EVO_FORM_CHANGED)
-                    Serial.printf("[Idle] Form: %s -> %s\n", FORM_NAMES[eR.form_before], FORM_NAMES[eR.form_after]);
-                if (eR.event == EVO_FORM_CHANGED)
-                    DisplayManager::showIdleFormChange(eR.form_before, eR.form_after);
-                if (eR.event == EVO_RHONGOMYNIAD)
-                    Serial.println("[Idle] *** RHONGOMYNIAD ***");
-                if (eR.event == EVO_RHONGOMYNIAD) {
-                    DisplayManager::showRhongomyniadTriggered();
-                    DisplayManager::playAnimation(ANIM_RHONGOMYNIAD);
-                    DisplayManager::switchPage(PAGE_EVOLUTION);
+                if (eR.event != EVO_NONE) {
+                    Serial.printf("[Idle] Evo: %s\n", EVO_EVENT_NAMES[eR.event]);
+                    DisplayManager::showEvolutionEvent(eR, pet.seriousness);
                 }
             }
         }
     }
 
-    // 每日结算检测
+    // Day-end check
     if (timeManager.checkNewDay()) {
         Serial.println("[Auto] New day detected, running day-end...");
         DisplayManager::showNewDayDetected();
         doDayEnd();
     }
 
-    // 自动存档
+    // Auto-save
     if (saveManager.shouldAutoSave(now)) {
         SaveResult r = saveManager.save(pet);
-        if (r == SAVE_OK) saveManager.markSaved(now);
-        if (r == SAVE_OK) DisplayManager::showAutoSave();
+        if (r == SAVE_OK) {
+            saveManager.markSaved(now);
+            DisplayManager::showAutoSave();
+        }
     }
+
+    // 4. Display update (state machine + render)
+    DisplayManager::updatePetSnapshot(pet);
+    DisplayManager::update(millis());
+
     delay(10);
 }

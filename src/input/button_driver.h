@@ -21,6 +21,7 @@ struct ButtonState {
     bool        long_press_fired;       // 本次按下是否已触发长按事件
     uint32_t    last_repeat_ms;         // 上次连按触发时间
     bool        repeat_started;         // 是否已进入连按模式
+    bool        press_dispatched;       // 本次按下的 PRESS 事件是否已派发
 };
 
 // ============================================================================
@@ -32,6 +33,14 @@ struct ComboState {
     uint32_t    combo_start_ms;         // 三键同时按下的起始时间
     bool        combo_fired;            // 本次组合是否已触发
 };
+
+// ============================================================================
+//  Combo candidate window 配置
+// ============================================================================
+
+// 当一个按键按下时, 延迟派发 PRESS 事件的窗口期 (ms)
+// 在此窗口内如果检测到三键同时按下, 则不派发普通 PRESS
+#define BTN_COMBO_CANDIDATE_MS  150
 
 // ============================================================================
 //  ButtonDriver 类
@@ -70,6 +79,11 @@ public:
     // 注入模拟按键事件 (调试用, 绕过GPIO读取)
     void injectEvent(ButtonId btn, ButtonEventType type, uint16_t duration = 0);
 
+#if ENABLE_INPUT_DEBUG
+    // 调试: 打印当前按键状态
+    void debugPrintState();
+#endif
+
 private:
     ButtonState _buttons[BTN_ID_COUNT];
     ComboState  _combo;
@@ -81,6 +95,10 @@ private:
     void detectEvents(uint32_t now);
     void detectCombo(uint32_t now);
     void pushEvent(ButtonId btn, ButtonEventType type, uint32_t timestamp, uint16_t duration = 0);
+
+    // 检查是否处于 combo candidate 窗口期
+    bool isInComboCandidateWindow(uint32_t now) const;
+    uint8_t countPressedButtons() const;
 };
 
 // 全局单例
