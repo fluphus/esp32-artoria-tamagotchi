@@ -2,7 +2,6 @@
 
 #include "seriousness.h"
 #include "../config/game_config.h"
-#include "../display/DisplayManager.h"
 #include <Arduino.h>
 
 SeriousnessSystem seriousnessSystem;
@@ -37,7 +36,6 @@ void SeriousnessSystem::updateRhongoTimer(PetState& pet, uint32_t currentTime) {
         if (pet.rhongo_timer_start == 0) {
             pet.rhongo_timer_start = currentTime;
             Serial.println("[Rhongo] Timer STARTED");
-            DisplayManager::showRhongoTimerStarted();
         }
 
         uint32_t elapsed = currentTime - pet.rhongo_timer_start;
@@ -45,14 +43,11 @@ void SeriousnessSystem::updateRhongoTimer(PetState& pet, uint32_t currentTime) {
             pet.is_rhongomyniad = true;
             pet.form = FORM_WHITE_LANCER_RHONGOMYNIAD;
             Serial.println("[Rhongo] *** TRIGGERED ***");
-            DisplayManager::showRhongoTimerTriggered();
-            DisplayManager::playAnimation(ANIM_RHONGOMYNIAD);
         }
     } else if (pet.seriousness < RHONGOMYNIAD_SAFE_DROP) {
         if (pet.rhongo_timer_start > 0) {
             Serial.printf("[Rhongo] Timer RESET (SR=%d < %d)\n",
                           pet.seriousness, RHONGOMYNIAD_SAFE_DROP);
-            DisplayManager::showRhongoTimerReset(pet.seriousness, RHONGOMYNIAD_SAFE_DROP);
             pet.rhongo_timer_start = 0;
         }
     }
@@ -224,5 +219,4 @@ void SeriousnessSystem::applyMissedFeedPenalty(PetState& pet) {
 
     Serial.printf("[Seriousness] Missed feed penalty: %d -> %d (+%d)\n",
                   old, pet.seriousness, MISSED_FEED_SERIOUSNESS);
-    DisplayManager::showMissedFeedPenalty(old, pet.seriousness, MISSED_FEED_SERIOUSNESS);
 }

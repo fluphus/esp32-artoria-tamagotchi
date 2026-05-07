@@ -402,6 +402,7 @@ void MenuController::executeDestroy() {
     if (!_pet) return;
 
     uint32_t now = timeManager.now();
+    Form destroyedForm = _pet->form;
     evolutionSystem.destroy(*_pet, now);
     feedingSystem.resetDaily(*_pet, timeManager.getDay());
 
@@ -412,7 +413,7 @@ void MenuController::executeDestroy() {
     saveManager.save(*_pet);
     saveManager.markSaved(now);
 
-    safeCallback(_callbacks->onDestroyExecuted);
+    safeCallback(_callbacks->onDestroyExecuted, destroyedForm);
     switchContext(UI_IDLE);
 }
 

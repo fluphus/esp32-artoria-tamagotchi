@@ -2,7 +2,6 @@
 
 #include "save_manager.h"
 #include "../config/game_config.h"
-#include "../display/DisplayManager.h"
 #include <Arduino.h>
 #include <Preferences.h>
 
@@ -74,7 +73,6 @@ SaveResult SaveManager::save(const PetState& pet) {
     size_t written = prefs.putBytes(slotHdrKey(targetSlot), &header, sizeof(SaveHeader));
     if (written != sizeof(SaveHeader)) {
         Serial.printf("[Save] ERROR: Failed to write header to slot %d\n", targetSlot);
-        DisplayManager::showSaveFailed();
         return SAVE_ERR_WRITE;
     }
 
@@ -82,13 +80,11 @@ SaveResult SaveManager::save(const PetState& pet) {
     written = prefs.putBytes(slotDataKey(targetSlot), &pet, sizeof(PetState));
     if (written != sizeof(PetState)) {
         Serial.printf("[Save] ERROR: Failed to write data to slot %d\n", targetSlot);
-        DisplayManager::showSaveFailed();
         return SAVE_ERR_WRITE;
     }
 
     Serial.printf("[Save] Slot %d saved (seq=%lu, %d bytes, crc=0x%04X)\n",
                   targetSlot, _nextSequence, (int)sizeof(PetState), header.checksum);
-    DisplayManager::playAnimation(ANIM_SAVE);
 
     _nextSequence++;
     return SAVE_OK;
@@ -208,7 +204,6 @@ SaveResult SaveManager::erase() {
     prefs.clear();
     _nextSequence = 1;
     Serial.println("[Save] All save data erased");
-    DisplayManager::showSaveErased();
 
     return SAVE_OK;
 }

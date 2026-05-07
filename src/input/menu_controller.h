@@ -44,7 +44,7 @@ struct UICallbacks {
     // --- 销毁 ---
     void (*onDestroyConfirmShow)(uint8_t cursor);           // 展示销毁确认 (0=yes, 1=no)
     void (*onDestroyCursorMove)(uint8_t cursor);            // yes/no 光标移动
-    void (*onDestroyExecuted)();                            // 销毁已执行
+    void (*onDestroyExecuted)(Form destroyedForm);          // 销毁已执行 (传入被销毁的形态)
     void (*onDestroyCancelled)();                           // 销毁已取消
 
     // --- 进化 ---

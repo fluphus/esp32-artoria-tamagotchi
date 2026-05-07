@@ -2,7 +2,6 @@
 
 #include "feeding.h"
 #include "../config/game_config.h"
-#include "../display/DisplayManager.h"
 #include <Arduino.h>
 #include <esp_random.h>
 
@@ -211,7 +210,6 @@ void FeedingSystem::applySpecialFood(PetState& pet, FeedOutcome& outcome, uint8_
                   SPECIAL_FOOD_TABLE[specialFoodId].name,
                   SPECIAL_FOOD_TABLE[specialFoodId].description);
     Serial.println("[Feed] (Special animation placeholder)");
-    DisplayManager::showSpecialFoodAnimation(specialFoodId);
 
     // 麻婆豆腐彩蛋判定
     if (rollMapoTofu()) {
@@ -224,13 +222,10 @@ void FeedingSystem::applySpecialFood(PetState& pet, FeedOutcome& outcome, uint8_
         Serial.printf("[Feed] \"%s\"\n", MAPO_TOFU.description);
         Serial.printf("[Feed] Mapo Tofu count: %d / %d\n",
                       pet.mapo_tofu_count, MAPO_TOFU_CURSE_THRESHOLD);
-        DisplayManager::showMapoTofuTriggered(pet.mapo_tofu_count, MAPO_TOFU_CURSE_THRESHOLD);
-        DisplayManager::playAnimation(ANIM_MAPO_TOFU);
 
         if (pet.mapo_tofu_count >= MAPO_TOFU_CURSE_THRESHOLD) {
             outcome.mapo_tofu_curse_activated = true;
             Serial.println("[Feed] *** CURSE ACTIVATED ***");
-            DisplayManager::showMapoTofuCurseActivated();
         }
 
         Serial.println("[Feed] !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
