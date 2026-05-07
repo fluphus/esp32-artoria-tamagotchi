@@ -2,6 +2,7 @@
 
 #include "evolution.h"
 #include "../config/game_config.h"
+#include "../display/DisplayManager.h"
 #include <Arduino.h>
 #include <esp_random.h>
 
@@ -12,6 +13,7 @@ Form EvolutionSystem::rollWhiteFunForm(PetState& pet) {
     pet.white_fun_form = (esp_random() % 2 == 0) ? FORM_WHITE_ARCHER : FORM_WHITE_RULER;
     pet.white_fun_form_locked = true;
     Serial.printf("[Evolution] White fun form: %s (locked)\n", FORM_NAMES[pet.white_fun_form]);
+    DisplayManager::showWhiteFunFormLocked(pet.white_fun_form);
     return pet.white_fun_form;
 }
 
@@ -74,6 +76,9 @@ EvolutionResult EvolutionSystem::checkChildGraduation(PetState& pet) {
     Serial.printf("[Evolution] %s -> %s\n",
                   FORM_NAMES[result.form_before],
                   FORM_NAMES[result.form_after]);
+    DisplayManager::showChildGraduation(result, pet.alignment);
+    DisplayManager::playAnimation(ANIM_EVOLUTION);
+    DisplayManager::switchPage(PAGE_EVOLUTION);
 
     Form resolved = resolveAdultForm(pet);
     if (resolved != pet.form) {
@@ -106,6 +111,9 @@ EvolutionResult EvolutionSystem::checkMapoCurse(PetState& pet) {
         Serial.println("[Evolution] Yorokobe, shounen.");
         Serial.println("[Evolution] Irreversible. No more interactions.");
         Serial.println("[Evolution] ================================");
+        DisplayManager::showBlackRhongomyniadTriggered();
+        DisplayManager::playAnimation(ANIM_BLACK_RHONGOMYNIAD);
+        DisplayManager::switchPage(PAGE_EVOLUTION);
     }
 
     return result;
@@ -147,6 +155,9 @@ EvolutionResult EvolutionSystem::check(PetState& pet, uint32_t currentTime) {
 
                 Serial.println("[Evolution] *** RHONGOMYNIAD ***");
                 Serial.println("[Evolution] Irreversible.");
+                DisplayManager::showRhongomyniadTriggered();
+                DisplayManager::playAnimation(ANIM_RHONGOMYNIAD);
+                DisplayManager::switchPage(PAGE_EVOLUTION);
                 return result;
             }
         }
@@ -163,6 +174,7 @@ EvolutionResult EvolutionSystem::check(PetState& pet, uint32_t currentTime) {
         Serial.printf("[Evolution] Form: %s -> %s (SR=%d, %s)\n",
                       FORM_NAMES[oldForm], FORM_NAMES[resolved],
                       pet.seriousness, TIER_NAMES[result.tier]);
+        DisplayManager::showFormChange(oldForm, resolved, pet.seriousness, result.tier);
     }
 
     return result;
@@ -171,6 +183,9 @@ EvolutionResult EvolutionSystem::check(PetState& pet, uint32_t currentTime) {
 void EvolutionSystem::destroy(PetState& pet, uint32_t currentTime) {
     Serial.println("[Evolution] *** DESTROY ***");
     Serial.printf("[Evolution] Destroying %s...\n", FORM_NAMES[pet.form]);
+    DisplayManager::showDestroyExecuted(pet.form);
+    DisplayManager::playAnimation(ANIM_DESTROY);
     pet.initNew(currentTime);
     Serial.println("[Evolution] Reset to Lily. New game.");
+    DisplayManager::showDestroyReset();
 }
