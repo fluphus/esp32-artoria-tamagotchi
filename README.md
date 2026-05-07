@@ -1,24 +1,24 @@
 [English](README.md) | [简体中文](README_zh.md) | [日本語](README_ja.md)
-# Artoria Tamagotchi (Fate/Grand Order Virtual Pet)
+# 👑 Artoria Tamagotchi (Fate/Grand Order Virtual Pet)
 
 A Tamagotchi-like virtual pet project powered by the **ESP32-S3 (N16R8)**.
 
 Raise your own Artoria! Start your journey with Saber Lily and guide her growth. Depending on your care and interactions, she can evolve into various classes including Archer, Lancer, Rider, and more.
 
-## Features (Core Logic Implemented)
+## ✨ Features
 * **Evolution System:** Multiple growth routes based on pet stats (Health, Seriousness, etc.).
 * **Time & Day Management:** Built-in internal clock to handle daily resets and penalties for missing meals.
 * **Persistent Storage:** Auto save/load system with checksum validation (prevents data corruption on power loss).
 * **Interactive Actions:** Feed, Poke, and monitor status.
 * **Display:** SSD1351 128x128 65K Color OLED via TFT_eSPI, with Serial placeholder backend for headless testing.
 
-## Current Project Status
+## 🚧 Current Project Status
 
 * Display: TFT_eSPI backend (SSD1351 128x128) and Serial placeholder backend both compile and run.
 * Input: 3-button physical input (L/M/R) with serial simulation (`btn l|m|r`, `btnl l|m|r`, `btnr l|m|r`).
 * Assets: Placeholder rectangles and text when real sprites are not present.
 
-## Hardware
+## 🛠️ Hardware Requirement
 
 * ESP32-S3 Development Board (N16R8 recommended)
 * SSD1351 1.5" 128x128 65K Color OLED (SPI)
