@@ -8,11 +8,37 @@
       "id": "esp",
       "top": 0,
       "left": 0,
-      "attrs": {
-        "flashSize": "16"
-      }
+      "attrs": { "flashSize": "16" }
+    },
+    {
+      "type": "wokwi-pushbutton",
+      "id": "btn1",
+      "top": 361.4,
+      "left": -307.2,
+      "attrs": { "color": "red", "xray": "1" }
+    },
+    {
+      "type": "wokwi-pushbutton",
+      "id": "btn2",
+      "top": 323,
+      "left": -211.2,
+      "attrs": { "color": "green", "xray": "1" }
+    },
+    {
+      "type": "wokwi-pushbutton",
+      "id": "btn3",
+      "top": 275,
+      "left": -105.6,
+      "attrs": { "color": "blue", "xray": "1" }
     }
   ],
-  "connections": [],
+  "connections": [
+    [ "esp:4", "btn1:1.l", "green", [ "h0" ] ],
+    [ "esp:5", "btn2:1.l", "green", [ "h0" ] ],
+    [ "esp:6", "btn3:1.l", "green", [ "h0" ] ],
+    [ "btn3:1.r", "esp:GND.1", "green", [ "v0" ] ],
+    [ "btn2:1.r", "btn3:2.l", "green", [ "v0" ] ],
+    [ "btn1:1.r", "btn2:2.l", "green", [ "v0" ] ]
+  ],
   "dependencies": {}
 }
