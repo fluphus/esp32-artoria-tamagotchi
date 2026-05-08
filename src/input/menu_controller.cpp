@@ -64,6 +64,10 @@ void MenuController::onAnimationComplete(UIContext animContext) {
         case UI_FEED_DRAW:
             // 食物绘制完成, 进入选择界面
             switchContext(UI_FEED_PICK);
+            // 同步首帧 cursor：showFeedDraw() 会将 DisplayModel.feedCursor 重置为 0，
+            // 若不在切到 PAGE_FEED_PICK 时补一次刷新，则 UI 首帧会显示错误的指针位置，
+            // 直到用户按键触发 onFeedCursorMove 才会对齐。
+            safeCallback(_callbacks->onFeedCursorMove, _feed.cursor, _feed.selected);
             break;
         case UI_POKE_ANIM:
             // 戳一下动画完成, 回到主界面
