@@ -183,4 +183,19 @@ void InputManager::buildMappingTable() {
     addMapping(UI_GALLERY, BTN_R, BTN_EVENT_PRESS, INPUT_GALLERY_NAV_RIGHT);
     // 中键: 退出图鉴
     addMapping(UI_GALLERY, BTN_M, BTN_EVENT_PRESS, INPUT_GALLERY_CLOSE);
+
+    // ========================================================================
+    // UI_TIME_SETUP - 初次开机时间设置
+    // ========================================================================
+    // 左键: 当前字段递增
+    addMapping(UI_TIME_SETUP, BTN_L, BTN_EVENT_PRESS, INPUT_TIMESET_INC);
+    addMapping(UI_TIME_SETUP, BTN_L, BTN_EVENT_REPEAT, INPUT_TIMESET_INC);
+    // 左键长按: 恢复默认时间
+    addMapping(UI_TIME_SETUP, BTN_L, BTN_EVENT_LONG_PRESS, INPUT_TIMESET_RESET_DEFAULT);
+    // 左键释放: 解除长按后的锁
+    addMapping(UI_TIME_SETUP, BTN_L, BTN_EVENT_RELEASE, INPUT_TIMESET_LEFT_RELEASE);
+    // 中键: 确认当前字段/下一字段
+    addMapping(UI_TIME_SETUP, BTN_M, BTN_EVENT_PRESS, INPUT_TIMESET_NEXT);
+    // 右键: 回退到上一字段
+    addMapping(UI_TIME_SETUP, BTN_R, BTN_EVENT_PRESS, INPUT_TIMESET_BACK);
 }

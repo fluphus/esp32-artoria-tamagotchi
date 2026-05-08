@@ -152,6 +152,9 @@ public:
 
     // 等待时间设置
     static void showWaitTimeSet();
+    static void showInitialTimeSetup(uint16_t year, uint8_t month, uint8_t day,
+                                     uint8_t hour, uint8_t minute, uint8_t fieldIndex,
+                                     bool awaitingConfirm);
 
     // 图鉴
     static void showGalleryGrid(int page_index, int selected_index);
@@ -182,6 +185,7 @@ private:
     static uint32_t     _pageHoldUntilMs;       // hold 结束时间
     static DisplayPage  _pageAfterHold;         // hold 结束后切换到的页面
     static UIContext    _contextAfterHold;      // hold 结束后切换到的上下文
+    static bool         _pendingWaitTimeSet;    // boot 结束后切到时间设置页
 
     // --- Pending evolution (麻婆诅咒链式动画) ---
     static bool             _pendingEvolutionActive;

@@ -110,6 +110,13 @@ enum GameInput : uint8_t {
     INPUT_GALLERY_NAV_LEFT,     // 图鉴: 光标左移 / 翻页
     INPUT_GALLERY_NAV_RIGHT,    // 图鉴: 光标右移 / 翻页
 
+    // --- 初次开机时间设置 ---
+    INPUT_TIMESET_INC,          // 当前字段数值递增
+    INPUT_TIMESET_NEXT,         // 确认当前字段并跳到下一字段
+    INPUT_TIMESET_BACK,         // 返回上一字段
+    INPUT_TIMESET_RESET_DEFAULT,// 长按左键: 恢复默认时间
+    INPUT_TIMESET_LEFT_RELEASE, // 左键释放: 清除长按复位后的锁定
+
     INPUT_COUNT                 // 总输入动作数
 };
 
@@ -128,6 +135,7 @@ enum UIContext : uint8_t {
     UI_EVOLUTION,               // 进化演出中
     UI_DESTROY_CONFIRM,         // 销毁确认界面
     UI_GALLERY,                 // 图鉴浏览界面
+    UI_TIME_SETUP,              // 初次开机时间设置界面
     UI_CONTEXT_COUNT
 };
 
@@ -156,7 +164,8 @@ static const char* const GAME_INPUT_NAMES[] = {
     "MENU_OPEN", "MENU_CLOSE", "STATUS_VIEW",
     "SAVE_MANUAL", "LOAD_SAVE",
     "DESTROY_HOLD", "DESTROY_CONFIRM", "DESTROY_CANCEL",
-    "GALLERY_OPEN", "GALLERY_CLOSE", "GALLERY_NAV_LEFT", "GALLERY_NAV_RIGHT"
+    "GALLERY_OPEN", "GALLERY_CLOSE", "GALLERY_NAV_LEFT", "GALLERY_NAV_RIGHT",
+    "TIMESET_INC", "TIMESET_NEXT", "TIMESET_BACK", "TIMESET_RESET_DEFAULT", "TIMESET_LEFT_RELEASE"
 };
 
 static const char* const BTN_NAMES[BTN_ID_COUNT] = {
@@ -167,7 +176,7 @@ static const char* const UI_CONTEXT_NAMES[UI_CONTEXT_COUNT] = {
     "IDLE", "STATUS", "MENU",
     "FEED_DRAW", "FEED_PICK", "SPECIAL_FOOD",
     "POKE_ANIM", "EVOLUTION", "DESTROY_CONFIRM",
-    "GALLERY"
+    "GALLERY", "TIME_SETUP"
 };
 
 #endif // INPUT_MAP_H

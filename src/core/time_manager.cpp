@@ -27,8 +27,8 @@ static uint8_t daysInMonth(uint16_t year, uint8_t month) {
 }
 
 void TimeManager::init() {
-    // 模拟模式: 从 2025-01-01 08:00:00 开始
-    _simulated_epoch = timeInfoToEpoch(2025, 1, 1, 8, 0, 0);
+    // 模拟模式: 使用 Unix epoch 起点, 首次开机由时间设置 UI 赋值
+    _simulated_epoch = 0;
     _sim_start_millis = millis();
     _advance_offset = 0;
 
@@ -112,6 +112,11 @@ void TimeManager::setSimulatedTime(uint16_t year, uint8_t month, uint8_t day,
     _simulated_epoch = timeInfoToEpoch(year, month, day, hour, minute, 0);
     _sim_start_millis = millis();
     _advance_offset = 0;
+
+    // 关键：重设时间后同步变化检测基线，避免下个 loop 误触发 newMinute/newDay
+    TimeInfo t = getTimeInfo();
+    _last_minute = t.minute;
+    _last_day = t.day;
 
     char buf[24];
     getFormattedFull(buf, sizeof(buf));

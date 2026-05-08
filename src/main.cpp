@@ -94,6 +94,9 @@ static void persistCurrentFormUnlock() {
     }
 }
 
+void printStatus();
+void skipTime(uint32_t offlineSeconds);
+
 // ============================================================================
 //  UICallbacks implementation (updates DisplayManager)
 // ============================================================================
@@ -228,6 +231,34 @@ static UICallbacks gameCallbacks = {
                 // UI_FEED_DRAW, UI_POKE_ANIM, UI_EVOLUTION 由具??show*() 负责切页
                 break;
         }
+    },
+    // onInitialTimeEdit
+    [](uint16_t year, uint8_t month, uint8_t day, uint8_t hour, uint8_t minute, uint8_t fieldIndex,
+       bool awaitingConfirm) {
+        DisplayManager::showInitialTimeSetup(year, month, day, hour, minute, fieldIndex, awaitingConfirm);
+    },
+    // onInitialTimeConfirm
+    [](uint16_t year, uint8_t month, uint8_t day, uint8_t hour, uint8_t minute) {
+        uint32_t timestamp = timeManager.timeInfoToEpoch(year, month, day, hour, minute, 0);
+        waitingForTimeSet = false;
+
+        if (loadedSaveTime > 0 && timestamp > loadedSaveTime) {
+            uint32_t offlineDuration = timestamp - loadedSaveTime;
+            Serial.printf("[Offline] Duration: %lu seconds (%.1f days)\n",
+                          offlineDuration, (float)offlineDuration / 86400.0f);
+            // 先回到存档时刻, 再补算离线时长, 避免把“当前时间”重复推进两次
+            TimeInfo base = timeManager.epochToTimeInfo(loadedSaveTime);
+            timeManager.setSimulatedTime(base.year, base.month, base.day, base.hour, base.minute);
+            skipTime(offlineDuration);
+        } else {
+            timeManager.setSimulatedTime(year, month, day, hour, minute);
+            Serial.println("[Offline] No compensation needed (no save time or time went backwards).");
+        }
+
+        menuController.switchContext(UI_IDLE);
+        DisplayManager::showSystemReady();
+        Serial.println("[Main] Initial time confirmed, entering normal operation.");
+        printStatus();
     }
 };
 
@@ -490,10 +521,26 @@ void skipTime(uint32_t offlineSeconds) {
 
     // 结算剩余分钟的严肃值增长
     if (remainingMinutes > 0) {
+        // 防守式恢复：若 idle_paused_until 丢失，但 poke 生效时间存在，
+        // 则可推导出本次应有的暂停截止，避免离线补偿把暂停窗口算成普通增长。
+        if (pet.last_poke_effect_time > 0) {
+            uint32_t derivedPauseUntil = pet.last_poke_effect_time + POKE_IDLE_PAUSE_SEC;
+            if (derivedPauseUntil > pet.idle_paused_until) {
+                Serial.printf("[Offline] Recover idle pause: %lu -> %lu (from poke)\n",
+                              pet.idle_paused_until, derivedPauseUntil);
+                pet.idle_paused_until = derivedPauseUntil;
+            }
+        }
+
         bool wasRhongo = pet.is_rhongomyniad;
+        uint32_t beforeEpoch = timeManager.now();
+        Serial.printf("[Offline] Before batch: now=%lu pause_until=%lu last_poke_effect=%lu rem=%lu min\n",
+                      beforeEpoch, pet.idle_paused_until, pet.last_poke_effect_time, remainingMinutes);
         timeManager.advanceMinutes(remainingMinutes);
         uint32_t now = timeManager.now();
         IdleTickResult iR = seriousnessSystem.onIdleBatch(pet, remainingMinutes, now);
+        Serial.printf("[Offline] After batch: now=%lu SR %d->%d remainder=%u\n",
+                      now, iR.seriousness_before, iR.seriousness_after, pet.idle_minute_remainder);
         if (!wasRhongo && pet.is_rhongomyniad) {
             persistCurrentFormUnlock();
         }
@@ -524,8 +571,6 @@ void processCommand(const char* cmd) {
             return;
         }
         TimeInfo t = timeManager.epochToTimeInfo(timestamp);
-        timeManager.setSimulatedTime(t.year, t.month, t.day, t.hour, t.minute);
-        // 补偿秒数精度
         Serial.printf("[Time] System time set to: %04d-%02d-%02d %02d:%02d:%02d\n",
                       t.year, t.month, t.day, t.hour, t.minute, t.second);
 
@@ -536,23 +581,29 @@ void processCommand(const char* cmd) {
                 uint32_t offlineDuration = timestamp - loadedSaveTime;
                 Serial.printf("[Offline] Duration: %lu seconds (%.1f days)\n",
                               offlineDuration, (float)offlineDuration / 86400.0f);
+                TimeInfo base = timeManager.epochToTimeInfo(loadedSaveTime);
+                timeManager.setSimulatedTime(base.year, base.month, base.day, base.hour, base.minute);
                 skipTime(offlineDuration);
             } else {
+                timeManager.setSimulatedTime(t.year, t.month, t.day, t.hour, t.minute);
                 Serial.println("[Offline] No compensation needed (no save time or time went backwards).");
             }
             // 进入正常运行
+            menuController.switchContext(UI_IDLE);
             DisplayManager::showSystemReady();
             Serial.println("[Main] Time set, entering normal operation.");
             printStatus();
+        } else {
+            timeManager.setSimulatedTime(t.year, t.month, t.day, t.hour, t.minute);
         }
         return;
     }
 
-    // 等待时间设置期间, 只允许 SET_TIME 和 s/h 命令
+    // 等待时间设置期间, 只允许时间设置相关和 s/h 命令
     if (waitingForTimeSet) {
         if (strcmp(cmd, "s") == 0) { printStatus(); return; }
         if (strcmp(cmd, "h") == 0) { printHelp(); return; }
-        Serial.println("[Main] Waiting for SET_TIME <unix_timestamp>. Other commands blocked.");
+        Serial.println("[Main] Waiting for date/time setup. Other commands blocked.");
         return;
     }
 
@@ -885,46 +936,45 @@ void setup() {
             loadedSaveTime = saveManager.getLastSaveTime();
             if (loadedSaveTime > 0) {
                 Serial.printf("[Main] Last save time: %lu\n", loadedSaveTime);
+            }
 
-                // 目标逻辑：
-                // - 真正断电/上电/棕断：需要用户补 Unix 时间（用于离线补偿）
-                // - deep sleep 唤醒：不需要补时，直接用 RTC 推进
-                // - 外部复位（例如串口监视器 DTR/RTS 触发 EN）：不弹补时（但也无法获得真实当前时间）
-                if (resetReason == ESP_RST_DEEPSLEEP || wokeFromDeepSleep) {
-                    uint64_t nowRtcUs = esp_rtc_get_time_us();
-                    uint32_t resumedEpoch = loadedSaveTime;
-                    uint32_t sleptSec = 0;
-                    if (rtc_us_at_sleep != 0 && epoch_at_sleep != 0 && nowRtcUs >= rtc_us_at_sleep) {
-                        sleptSec = (uint32_t)((nowRtcUs - rtc_us_at_sleep) / 1000000ULL);
-                        resumedEpoch = epoch_at_sleep + sleptSec;
-                        Serial.printf("[Boot] Deep sleep elapsed: %lu sec\n", sleptSec);
-                    } else {
-                        Serial.println("[Boot] Deep sleep markers missing; falling back to last save time.");
-                    }
-
-                    // deep sleep 期间的“实时推进”补偿：
-                    // 先回到入睡时刻，再用 sleptSec 做一次性补算（分钟/跨天/进化/终局等）。
-                    if (epoch_at_sleep != 0 && sleptSec > 0) {
-                        TimeInfo base = timeManager.epochToTimeInfo(epoch_at_sleep);
-                        timeManager.setSimulatedTime(base.year, base.month, base.day, base.hour, base.minute);
-                        skipTime(sleptSec);
-                    } else {
-                        TimeInfo t = timeManager.epochToTimeInfo(resumedEpoch);
-                        timeManager.setSimulatedTime(t.year, t.month, t.day, t.hour, t.minute);
-                    }
-                    waitingForTimeSet = false;
-                    powerManager.onWakeFromSleep();
-                    Serial.println("[Boot] Resumed (deep sleep): RTC-based time restore (no SET_TIME).");
-                } else if (resetReason == ESP_RST_POWERON || resetReason == ESP_RST_BROWNOUT) {
-                    waitingForTimeSet = true;
-                    Serial.println("[Main] *** Please set current time via: SET_TIME <unix_timestamp> ***");
+            // 统一逻辑：
+            // - 首次开机(无存档) 与 断电类复位：都走时间设置 UI
+            // - deep sleep 唤醒：不要求设置时间，直接用 RTC 推进
+            // - 非断电类复位：沿用存档时间点继续运行
+            if (resetReason == ESP_RST_DEEPSLEEP || wokeFromDeepSleep) {
+                uint64_t nowRtcUs = esp_rtc_get_time_us();
+                uint32_t resumedEpoch = (loadedSaveTime > 0) ? loadedSaveTime : timeManager.now();
+                uint32_t sleptSec = 0;
+                if (rtc_us_at_sleep != 0 && epoch_at_sleep != 0 && nowRtcUs >= rtc_us_at_sleep) {
+                    sleptSec = (uint32_t)((nowRtcUs - rtc_us_at_sleep) / 1000000ULL);
+                    resumedEpoch = epoch_at_sleep + sleptSec;
+                    Serial.printf("[Boot] Deep sleep elapsed: %lu sec\n", sleptSec);
                 } else {
-                    // 非断电类复位：不要求用户输入时间戳，直接回到存档时间点继续跑（不做离线补偿）
+                    Serial.println("[Boot] Deep sleep markers missing; falling back to save/current time.");
+                }
+
+                if (epoch_at_sleep != 0 && sleptSec > 0) {
+                    TimeInfo base = timeManager.epochToTimeInfo(epoch_at_sleep);
+                    timeManager.setSimulatedTime(base.year, base.month, base.day, base.hour, base.minute);
+                    skipTime(sleptSec);
+                } else {
+                    TimeInfo t = timeManager.epochToTimeInfo(resumedEpoch);
+                    timeManager.setSimulatedTime(t.year, t.month, t.day, t.hour, t.minute);
+                }
+                waitingForTimeSet = false;
+                powerManager.onWakeFromSleep();
+                Serial.println("[Boot] Resumed (deep sleep): RTC-based time restore.");
+            } else if (resetReason == ESP_RST_POWERON || resetReason == ESP_RST_BROWNOUT) {
+                waitingForTimeSet = true;
+                Serial.println("[Main] Power-loss boot: please set current date/time via UI.");
+            } else {
+                if (loadedSaveTime > 0) {
                     TimeInfo t = timeManager.epochToTimeInfo(loadedSaveTime);
                     timeManager.setSimulatedTime(t.year, t.month, t.day, t.hour, t.minute);
-                    waitingForTimeSet = false;
-                    Serial.println("[Boot] Non-power reset: restored to last save time (no SET_TIME).");
                 }
+                waitingForTimeSet = false;
+                Serial.println("[Boot] Non-power reset: restored to saved time.");
             }
             // 加载图鉴数据 (旧存档兼容: 无数据则初始化为空)
             saveManager.loadGallery(gallerySystem.getData());
@@ -934,6 +984,7 @@ void setup() {
             Serial.println("[Main] Save corrupted, new game");
             DisplayManager::showSaveCorruptedNewGame();
             pet.initNew(timeManager.now());
+            waitingForTimeSet = true;
         }
     } else {
         Serial.println("[Main] New game");
@@ -941,6 +992,7 @@ void setup() {
         pet.initNew(timeManager.now());
         // 新游戏: 解锁初始形态
         gallerySystem.unlockForm(pet.form);
+        waitingForTimeSet = true;
     }
 
     menuController.init(&pet, &gameCallbacks);
@@ -950,8 +1002,9 @@ void setup() {
     printStatus();
 
     if (waitingForTimeSet) {
-        DisplayManager::showWaitTimeSet();
-        Serial.println("\n[Main] Waiting for SET_TIME command...\n> ");
+        uint32_t baseEpoch = (loadedSaveTime > 0) ? loadedSaveTime : timeManager.timeInfoToEpoch(2026, 1, 1, 0, 0, 0);
+        menuController.startInitialTimeSetup(baseEpoch);
+        Serial.println("\n[Main] Waiting for date/time setup (buttons)...\n> ");
     } else {
         DisplayManager::showSystemReady();
         Serial.println("\nReady.\n> ");
@@ -1016,6 +1069,7 @@ void loop() {
 
     // 等待时间设置期间, 只处理串口命令和显示更新
     if (waitingForTimeSet) {
+        menuController.update();
         powerManager.update(millis());
         DisplayManager::update(millis());
         delay(10);

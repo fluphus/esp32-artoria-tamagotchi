@@ -53,6 +53,11 @@ struct UICallbacks {
 
     // --- 通用 ---
     void (*onContextChange)(UIContext from, UIContext to);  // UI上下文切换
+    void (*onInitialTimeEdit)(uint16_t year, uint8_t month, uint8_t day,
+                              uint8_t hour, uint8_t minute, uint8_t fieldIndex,
+                              bool awaitingConfirm);
+    void (*onInitialTimeConfirm)(uint16_t year, uint8_t month, uint8_t day,
+                                 uint8_t hour, uint8_t minute);
 };
 
 // ============================================================================
@@ -74,6 +79,22 @@ struct FeedPickState {
 struct DestroyConfirmState {
     uint8_t     cursor;                 // 0 = yes (INPUT_DESTROY_CONFIRM), 1 = no (INPUT_DESTROY_CANCEL)
     bool        active;
+};
+
+// ============================================================================
+//  初次时间设置状态
+// ============================================================================
+
+struct InitialTimeSetupState {
+    bool active;
+    uint16_t year;
+    uint8_t month;
+    uint8_t day;
+    uint8_t hour;
+    uint8_t minute;
+    uint8_t fieldIndex; // 0=Y 1=M 2=D 3=H 4=m
+    bool awaitingConfirm;
+    bool leftLockedUntilRelease;
 };
 
 // ============================================================================
@@ -102,12 +123,14 @@ public:
     // 注入模拟按键事件 (调试用, 绕过GPIO)
     // 直接向 ButtonDriver 注入事件, 经 InputManager 映射后处理
     void injectButton(ButtonId btn, ButtonEventType type);
+    void startInitialTimeSetup(uint32_t baseEpoch);
 
 private:
     PetState*       _pet;
     UICallbacks*    _callbacks;
     FeedPickState   _feed;
     DestroyConfirmState _destroy;
+    InitialTimeSetupState _initialTime;
 
     // 特殊食物选择
     uint8_t         _sfood_cursor;
@@ -125,6 +148,7 @@ private:
     void handleSpecialFood(GameInput action);
     void handleDestroyConfirm(GameInput action);
     void handleGallery(GameInput action);
+    void handleTimeSetup(GameInput action);
 
     // 业务逻辑
     void startFeed();
@@ -135,6 +159,8 @@ private:
     void enterDestroyConfirm();
     void executeDestroy();
     void cancelDestroy();
+    void emitInitialTimeEdit();
+    void incrementInitialTimeField();
 
     // 回调安全调用
     template<typename Func, typename... Args>

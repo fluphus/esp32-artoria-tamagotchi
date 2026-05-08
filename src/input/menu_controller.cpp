@@ -10,6 +10,16 @@
 
 MenuController menuController;
 
+static uint8_t daysInMonthForSetup(uint16_t year, uint8_t month) {
+    if (month < 1 || month > 12) return 30;
+    if (month == 2) {
+        bool leap = ((year % 4 == 0 && year % 100 != 0) || (year % 400 == 0));
+        return leap ? 29 : 28;
+    }
+    static const uint8_t days[12] = {31,28,31,30,31,30,31,31,30,31,30,31};
+    return days[month - 1];
+}
+
 void MenuController::init(PetState* pet, UICallbacks* callbacks) {
     _pet = pet;
     _callbacks = callbacks;
@@ -25,6 +35,15 @@ void MenuController::init(PetState* pet, UICallbacks* callbacks) {
     _sfood_cursor = 0;
     _sfood_count = 0;
     _combo_pending = false;
+    _initialTime.active = false;
+    _initialTime.year = 2026;
+    _initialTime.month = 1;
+    _initialTime.day = 1;
+    _initialTime.hour = 0;
+    _initialTime.minute = 0;
+    _initialTime.fieldIndex = 0;
+    _initialTime.awaitingConfirm = false;
+    _initialTime.leftLockedUntilRelease = false;
 
     inputManager.init();
 }
@@ -39,7 +58,7 @@ void MenuController::update() {
     }
 
     // 优先检测三键销毁组合
-    if (inputManager.isDestroyComboTriggered()) {
+    if (inputManager.getContext() != UI_TIME_SETUP && inputManager.isDestroyComboTriggered()) {
         if (!_destroy.active) {
             enterDestroyConfirm();
         }
@@ -124,9 +143,27 @@ void MenuController::handleAction(GameInput action) {
         case UI_GALLERY:
             handleGallery(action);
             break;
+        case UI_TIME_SETUP:
+            handleTimeSetup(action);
+            break;
         default:
             break;
     }
+}
+
+void MenuController::startInitialTimeSetup(uint32_t baseEpoch) {
+    TimeInfo t = timeManager.epochToTimeInfo(baseEpoch);
+    _initialTime.active = true;
+    _initialTime.year = t.year;
+    _initialTime.month = t.month;
+    _initialTime.day = t.day;
+    _initialTime.hour = t.hour;
+    _initialTime.minute = t.minute;
+    _initialTime.fieldIndex = 0;
+    _initialTime.awaitingConfirm = false;
+    _initialTime.leftLockedUntilRelease = false;
+    switchContext(UI_TIME_SETUP);
+    emitInitialTimeEdit();
 }
 
 // ============================================================================
@@ -455,6 +492,14 @@ void MenuController::doPoke() {
     if (eR.event != EVO_NONE) {
         safeCallback(_callbacks->onEvolution, eR, _pet->seriousness);
     }
+
+    // 关键：poke 会更新冷却与待机暂停时间戳，需立即持久化以避免断电后离线补偿失真
+    SaveResult sr = saveManager.save(*_pet, timeManager.now());
+    if (sr == SAVE_OK) {
+        saveManager.markSaved(now);
+    } else {
+        Serial.printf("[MC] WARN: poke save failed (%d)\n", (int)sr);
+    }
 }
 
 void MenuController::enterDestroyConfirm() {
@@ -554,6 +599,97 @@ void MenuController::handleGallery(GameInput action) {
         default:
             break;
     }
+}
+
+void MenuController::handleTimeSetup(GameInput action) {
+    if (!_initialTime.active) return;
+    switch (action) {
+        case INPUT_TIMESET_RESET_DEFAULT:
+            _initialTime.year = 2026;
+            _initialTime.month = 1;
+            _initialTime.day = 1;
+            _initialTime.hour = 0;
+            _initialTime.minute = 0;
+            _initialTime.fieldIndex = 0;
+            _initialTime.awaitingConfirm = false;
+            _initialTime.leftLockedUntilRelease = true;
+            emitInitialTimeEdit();
+            break;
+        case INPUT_TIMESET_LEFT_RELEASE:
+            _initialTime.leftLockedUntilRelease = false;
+            break;
+        case INPUT_TIMESET_INC:
+            if (_initialTime.leftLockedUntilRelease) break;
+            if (_initialTime.awaitingConfirm) break;
+            incrementInitialTimeField();
+            emitInitialTimeEdit();
+            break;
+        case INPUT_TIMESET_NEXT:
+            if (_initialTime.fieldIndex < 4) {
+                _initialTime.fieldIndex++;
+                _initialTime.awaitingConfirm = false;
+                emitInitialTimeEdit();
+            } else {
+                if (!_initialTime.awaitingConfirm) {
+                    _initialTime.awaitingConfirm = true;
+                    emitInitialTimeEdit();
+                } else {
+                    _initialTime.active = false;
+                    _initialTime.awaitingConfirm = false;
+                    safeCallback(_callbacks->onInitialTimeConfirm,
+                                 _initialTime.year, _initialTime.month, _initialTime.day,
+                                 _initialTime.hour, _initialTime.minute);
+                }
+            }
+            break;
+        case INPUT_TIMESET_BACK:
+            if (_initialTime.awaitingConfirm) {
+                _initialTime.awaitingConfirm = false;
+                emitInitialTimeEdit();
+            } else if (_initialTime.fieldIndex > 0) {
+                _initialTime.fieldIndex--;
+                emitInitialTimeEdit();
+            }
+            break;
+        default:
+            break;
+    }
+}
+
+void MenuController::emitInitialTimeEdit() {
+    safeCallback(_callbacks->onInitialTimeEdit,
+                 _initialTime.year, _initialTime.month, _initialTime.day,
+                 _initialTime.hour, _initialTime.minute, _initialTime.fieldIndex,
+                 _initialTime.awaitingConfirm);
+}
+
+void MenuController::incrementInitialTimeField() {
+    switch (_initialTime.fieldIndex) {
+        case 0:
+            _initialTime.year++;
+            if (_initialTime.year > 2099) _initialTime.year = 2000;
+            break;
+        case 1:
+            _initialTime.month++;
+            if (_initialTime.month > 12) _initialTime.month = 1;
+            break;
+        case 2: {
+            uint8_t dim = daysInMonthForSetup(_initialTime.year, _initialTime.month);
+            _initialTime.day++;
+            if (_initialTime.day > dim) _initialTime.day = 1;
+            break;
+        }
+        case 3:
+            _initialTime.hour = (uint8_t)((_initialTime.hour + 1) % 24);
+            break;
+        case 4:
+            _initialTime.minute = (uint8_t)((_initialTime.minute + 1) % 60);
+            break;
+        default:
+            break;
+    }
+    uint8_t dim = daysInMonthForSetup(_initialTime.year, _initialTime.month);
+    if (_initialTime.day > dim) _initialTime.day = dim;
 }
 
 void MenuController::injectButton(ButtonId btn, ButtonEventType type) {

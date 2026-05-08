@@ -29,6 +29,7 @@ bool         DisplayManager::_pageHoldActive    = false;
 uint32_t     DisplayManager::_pageHoldUntilMs   = 0;
 DisplayPage  DisplayManager::_pageAfterHold     = PAGE_IDLE;
 UIContext    DisplayManager::_contextAfterHold  = UI_IDLE;
+bool         DisplayManager::_pendingWaitTimeSet = false;
 
 // Pending evolution (麻婆诅咒链式动画)
 bool             DisplayManager::_pendingEvolutionActive   = false;
@@ -50,6 +51,7 @@ void DisplayManager::init() {
     _pageHoldUntilMs = 0;
     _pageAfterHold = PAGE_IDLE;
     _contextAfterHold = UI_IDLE;
+    _pendingWaitTimeSet = false;
     _pendingEvolutionActive = false;
 
     DisplayRenderer::init();
@@ -110,7 +112,8 @@ void DisplayManager::update(uint32_t nowMs) {
     switch (_currentPage) {
         case PAGE_BOOT:
             if (nowMs - _pageEnteredMs >= ANIM_DURATION_BOOT) {
-                switchPage(PAGE_IDLE);
+                switchPage(_pendingWaitTimeSet ? PAGE_WAIT_TIME_SET : PAGE_IDLE);
+                _pendingWaitTimeSet = false;
             }
             break;
 
@@ -130,6 +133,11 @@ void DisplayManager::update(uint32_t nowMs) {
     // --- Toast 超时 ---
     if (_model.toast[0] != '\0' && nowMs >= _model.toastUntilMs) {
         _model.toast[0] = '\0';
+        markDirty();
+    }
+
+    // 时间设置页的选中项闪烁依赖时间，需持续重绘避免卡在“空白帧”
+    if (_currentPage == PAGE_WAIT_TIME_SET && _currentAnim == ANIM_NONE) {
         markDirty();
     }
 
@@ -243,7 +251,6 @@ bool DisplayManager::isPageBlockingInput() {
     if (_currentPage == PAGE_BOOT) return true;
     if (_currentPage == PAGE_EVOLUTION) return true;
     if (_currentPage == PAGE_DAY_END) return true;
-    if (_currentPage == PAGE_WAIT_TIME_SET) return true;
     // Page hold 期间阻塞输入 (FeedResult hold, SpecialFood confirm hold)
     if (_pageHoldActive) return true;
     return false;
@@ -630,7 +637,25 @@ void DisplayManager::showAutoSave() {
 // --- 等待时间设置 ---
 
 void DisplayManager::showWaitTimeSet() {
+    if (_currentPage == PAGE_BOOT) {
+        _pendingWaitTimeSet = true;
+        return;
+    }
     switchPage(PAGE_WAIT_TIME_SET);
+}
+
+void DisplayManager::showInitialTimeSetup(uint16_t year, uint8_t month, uint8_t day,
+                                          uint8_t hour, uint8_t minute, uint8_t fieldIndex,
+                                          bool awaitingConfirm) {
+    _model.setupYear = year;
+    _model.setupMonth = month;
+    _model.setupDay = day;
+    _model.setupHour = hour;
+    _model.setupMinute = minute;
+    _model.setupFieldIndex = fieldIndex;
+    _model.setupAwaitingConfirm = awaitingConfirm;
+    showWaitTimeSet();
+    markDirty();
 }
 
 // --- 图鉴 ---

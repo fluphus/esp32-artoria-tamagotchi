@@ -89,6 +89,15 @@ struct DisplayModel {
     char dateStr[6];                // "MM/DD"
     uint16_t ageDay;
 
+    // --- 初次时间设置 ---
+    uint16_t setupYear;
+    uint8_t setupMonth;
+    uint8_t setupDay;
+    uint8_t setupHour;
+    uint8_t setupMinute;
+    uint8_t setupFieldIndex;        // 0=Y 1=M 2=D 3=H 4=m
+    bool setupAwaitingConfirm;
+
     // --- 动画帧状态 (供 renderer 使用) ---
     uint8_t animState;              // 当前 AnimState 枚举值
     uint32_t animElapsedMs;         // 动画已播放时间

@@ -7,6 +7,7 @@
 #include "../config/game_config.h"
 #include "../pet/gallery.h"
 #include <Arduino.h>
+#include <string.h>
 
 // ============================================================================
 //  Serial Placeholder Backend
@@ -151,8 +152,30 @@ void DisplayRenderer::drawDayEnd(const DisplayModel& model) {
 
 void DisplayRenderer::drawWaitTimeSet(const DisplayModel& model) {
     Serial.println("[Display] --- WAITING FOR TIME ---");
-    Serial.println("[Display]   Please set time via serial:");
-    Serial.println("[Display]   SET_TIME <unix_timestamp>");
+    uint16_t year = model.setupYear;
+    uint8_t month = model.setupMonth;
+    uint8_t day = model.setupDay;
+    uint8_t hour = model.setupHour;
+    uint8_t minute = model.setupMinute;
+    uint8_t field = model.setupFieldIndex;
+    bool blinkOn = ((millis() / 400) % 2) == 0;
+    char buf[24];
+    snprintf(buf, sizeof(buf), "%04u-%02u-%02u %02u:%02u", year, month, day, hour, minute);
+    if (!model.setupAwaitingConfirm && !blinkOn) {
+        if (field == 0) { memcpy(&buf[0], "____", 4); }
+        else if (field == 1) { memcpy(&buf[5], "__", 2); }
+        else if (field == 2) { memcpy(&buf[8], "__", 2); }
+        else if (field == 3) { memcpy(&buf[11], "__", 2); }
+        else if (field == 4) { memcpy(&buf[14], "__", 2); }
+    }
+    Serial.printf("[Display]   %s\n", buf);
+    if (model.setupAwaitingConfirm) {
+        Serial.println("[Display]   Confirm?");
+        Serial.println("[Display]   M:Confirm R:Back");
+    } else {
+        Serial.println("[Display]   L:+ M:OK R:Back");
+        Serial.println("[Display]   Hold L:2026-01-01 00:00");
+    }
 }
 
 void DisplayRenderer::drawGallery(const DisplayModel& model) {
@@ -1036,14 +1059,37 @@ void DisplayRenderer::drawWaitTimeSet(const DisplayModel& model) {
     tft.setTextDatum(TC_DATUM);
 
     tft.setTextColor(COLOR_WARN, COLOR_BG);
-    tft.drawString("SET TIME", SCREEN_WIDTH / 2, 30);
+    tft.drawString("SET DATE/TIME", SCREEN_WIDTH / 2, 18);
+
+    char text[24];
+    snprintf(text, sizeof(text), "%04u-%02u-%02u %02u:%02u",
+             model.setupYear, model.setupMonth, model.setupDay,
+             model.setupHour, model.setupMinute);
+
+    bool blinkOn = ((millis() / 400) % 2) == 0;
+    if (!model.setupAwaitingConfirm && !blinkOn) {
+        uint8_t field = model.setupFieldIndex;
+        if (field == 0) { memcpy(&text[0], "____", 4); }
+        else if (field == 1) { memcpy(&text[5], "__", 2); }
+        else if (field == 2) { memcpy(&text[8], "__", 2); }
+        else if (field == 3) { memcpy(&text[11], "__", 2); }
+        else if (field == 4) { memcpy(&text[14], "__", 2); }
+    }
 
     tft.setTextColor(COLOR_TEXT, COLOR_BG);
-    tft.drawString("Send via serial:", SCREEN_WIDTH / 2, 55);
-    tft.drawString("SET_TIME <epoch>", SCREEN_WIDTH / 2, 70);
+    tft.drawString(text, SCREEN_WIDTH / 2, 56);
 
-    tft.setTextColor(COLOR_TEXT_DIM, COLOR_BG);
-    tft.drawString("Waiting...", SCREEN_WIDTH / 2, 100);
+    if (model.setupAwaitingConfirm) {
+        tft.setTextColor(COLOR_WARN, COLOR_BG);
+        tft.drawString("Confirm?", SCREEN_WIDTH / 2, 74);
+        tft.setTextColor(COLOR_TEXT_DIM, COLOR_BG);
+        tft.drawString("M:Confirm  R:Back", SCREEN_WIDTH / 2, 98);
+    } else {
+        tft.setTextColor(COLOR_TEXT_DIM, COLOR_BG);
+        tft.drawString("24H format", SCREEN_WIDTH / 2, 74);
+        tft.drawString("L:+ M:Next R:Back", SCREEN_WIDTH / 2, 92);
+        tft.drawString("Hold L:Default", SCREEN_WIDTH / 2, 106);
+    }
 
     tft.setTextDatum(TL_DATUM);
 }
