@@ -34,6 +34,7 @@ enum DisplayPage : uint8_t {
     PAGE_DESTROY_CONFIRM,       // 销毁确认
     PAGE_DAY_END,               // 日结算展示
     PAGE_WAIT_TIME_SET,         // 等待串口设置时间
+    PAGE_GALLERY,               // 图鉴浏览
     PAGE_COUNT
 };
 
@@ -150,6 +151,9 @@ public:
 
     // 等待时间设置
     static void showWaitTimeSet();
+
+    // 图鉴
+    static void showGalleryGrid(int page_index, int selected_index);
 
     // Toast
     static void showToast(const char* message, uint32_t durationMs = PAGE_DURATION_TOAST);

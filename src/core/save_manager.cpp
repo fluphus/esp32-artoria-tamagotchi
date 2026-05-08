@@ -2,6 +2,7 @@
 
 #include "save_manager.h"
 #include "../config/game_config.h"
+#include "../pet/gallery.h"
 #include <Arduino.h>
 #include <Preferences.h>
 
@@ -231,4 +232,40 @@ uint16_t SaveManager::calcChecksum(const uint8_t* data, size_t len) {
         sum += data[i];
     }
     return sum;
+}
+
+// ============================================================================
+//  图鉴存档 (独立 NVS key, 与主存档分离)
+// ============================================================================
+
+static const char* GALLERY_NVS_KEY = "gallery";
+
+SaveResult SaveManager::saveGallery(const GalleryData& gallery) {
+    if (!_initialized) return SAVE_ERR_NVS_INIT;
+
+    size_t written = prefs.putBytes(GALLERY_NVS_KEY, &gallery, sizeof(GalleryData));
+    if (written != sizeof(GalleryData)) {
+        Serial.println("[Save] ERROR: Failed to write gallery data");
+        return SAVE_ERR_WRITE;
+    }
+
+    Serial.printf("[Save] Gallery saved (%d bytes, %d/%d unlocked)\n",
+                  (int)sizeof(GalleryData), gallery.getUnlockedCount(), FORM_COUNT);
+    return SAVE_OK;
+}
+
+SaveResult SaveManager::loadGallery(GalleryData& gallery) {
+    if (!_initialized) return SAVE_ERR_NVS_INIT;
+
+    size_t readLen = prefs.getBytes(GALLERY_NVS_KEY, &gallery, sizeof(GalleryData));
+    if (readLen != sizeof(GalleryData)) {
+        // 旧存档兼容: 没有图鉴数据, 安全初始化为空
+        Serial.println("[Save] No gallery data found (old save?), initializing empty");
+        gallery.init();
+        return SAVE_ERR_NO_DATA;
+    }
+
+    Serial.printf("[Save] Gallery loaded (%d/%d unlocked)\n",
+                  gallery.getUnlockedCount(), FORM_COUNT);
+    return SAVE_OK;
 }

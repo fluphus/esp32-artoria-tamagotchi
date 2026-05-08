@@ -6,6 +6,7 @@
 #include "DisplayManager.h"
 #include "../input/menu_controller.h"
 #include "../core/time_manager.h"
+#include "../pet/gallery.h"
 #include <Arduino.h>
 #include <string.h>
 
@@ -180,6 +181,9 @@ void DisplayManager::renderIfDirty() {
             break;
         case PAGE_WAIT_TIME_SET:
             DisplayRenderer::drawWaitTimeSet(_model);
+            break;
+        case PAGE_GALLERY:
+            DisplayRenderer::drawGallery(_model);
             break;
         default:
             break;
@@ -625,6 +629,16 @@ void DisplayManager::showAutoSave() {
 
 void DisplayManager::showWaitTimeSet() {
     switchPage(PAGE_WAIT_TIME_SET);
+}
+
+// --- 图鉴 ---
+
+void DisplayManager::showGalleryGrid(int page_index, int selected_index) {
+    _model.galleryPage = (uint8_t)page_index;
+    _model.gallerySelectedIndex = (uint8_t)selected_index;
+    _model.galleryTotalForms = TOTAL_GALLERY_FORMS;
+    _model.galleryItemsThisPage = gallerySystem.getItemCountOnPage((uint8_t)page_index);
+    markDirty();
 }
 
 // --- Toast ---

@@ -71,6 +71,12 @@ struct DisplayModel {
     // --- 销毁确认 ---
     uint8_t destroyCursor;          // 0=yes, 1=no
 
+    // --- 图鉴 ---
+    uint8_t galleryPage;            // 当前页码
+    uint8_t gallerySelectedIndex;   // 当前页内选中格子索引
+    uint8_t galleryTotalForms;      // 总形态数
+    uint8_t galleryItemsThisPage;   // 当前页实际有效格子数
+
     // --- Toast 消息 ---
     char toast[64];
     uint32_t toastUntilMs;

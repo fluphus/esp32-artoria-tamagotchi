@@ -13,6 +13,7 @@
 #include "../pet/feeding.h"
 #include "../pet/seriousness.h"
 #include "../pet/evolution.h"
+#include "../pet/gallery.h"
 #include "../core/time_manager.h"
 #include "../core/save_manager.h"
 
@@ -123,6 +124,7 @@ private:
     void handleFeedPick(GameInput action);
     void handleSpecialFood(GameInput action);
     void handleDestroyConfirm(GameInput action);
+    void handleGallery(GameInput action);
 
     // 业务逻辑
     void startFeed();

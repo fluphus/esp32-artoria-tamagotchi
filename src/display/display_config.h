@@ -10,8 +10,8 @@
 //  显示后端选择 (只启用一个)
 // ============================================================================
 
-#define DISPLAY_BACKEND_SERIAL_PLACEHOLDER  0   // Serial 占位输出 (无真实屏幕)
-#define DISPLAY_BACKEND_TFT_ESPI            1   // TFT_eSPI 驱动 (SSD1351 128x128)
+#define DISPLAY_BACKEND_SERIAL_PLACEHOLDER  1   // Serial 占位输出 (无真实屏幕)
+#define DISPLAY_BACKEND_TFT_ESPI            0   // TFT_eSPI 驱动 (SSD1351 128x128)
 #define DISPLAY_BACKEND_LOVYANGFX           0   // LovyanGFX 驱动
 #define DISPLAY_BACKEND_U8G2                0   // U8g2 驱动
 
@@ -54,6 +54,7 @@
 #define COLOR_TOAST_TEXT        0xFFFF      // 白色 Toast 文字
 #define COLOR_BAR_BG            0x2104      // 进度条背景 (深灰)
 #define COLOR_PLACEHOLDER       0x4208      // 占位矩形颜色
+#define COLOR_HIGHLIGHT         0xFFE0      // 高亮边框 (黄色, 图鉴光标等)
 
 // ============================================================================
 //  页面布局常量 (128x128 屏幕)

@@ -7,6 +7,7 @@
 #include "pet/feeding.h"
 #include "pet/seriousness.h"
 #include "pet/evolution.h"
+#include "pet/gallery.h"
 #include "input/menu_controller.h"
 #include "display/DisplayManager.h"
 #include "core/power_manager.h"
@@ -129,6 +130,10 @@ static UICallbacks gameCallbacks = {
         Serial.printf("[MC] Evolution: %s -> %s (SR=%d)\n",
             FORM_NAMES[r.form_before], FORM_NAMES[r.form_after], srAfter);
         DisplayManager::showEvolutionEvent(r, srAfter);
+        // 图鉴: 解锁新形态
+        if (gallerySystem.unlockForm(r.form_after)) {
+            saveManager.saveGallery(gallerySystem.getData());
+        }
     },
     // onContextChange
     [](UIContext from, UIContext to) {
@@ -152,6 +157,9 @@ static UICallbacks gameCallbacks = {
                 break;
             case UI_DESTROY_CONFIRM:
                 DisplayManager::switchPage(PAGE_DESTROY_CONFIRM);
+                break;
+            case UI_GALLERY:
+                DisplayManager::switchPage(PAGE_GALLERY);
                 break;
             default:
                 // UI_FEED_DRAW, UI_POKE_ANIM, UI_EVOLUTION 由具??show*() 负责切页
@@ -249,6 +257,17 @@ void printHelp() {
     Serial.println("  hp/sr/age <val>  Debug set");
     Serial.println("  grad           Force graduation");
     Serial.println("  mapo           Debug +1 mapo count");
+    Serial.println("  FORCE_NOBU     Force nobu route");
+    Serial.println("--- Gallery ---");
+    Serial.println("  UNLOCK_ALL     Unlock all gallery forms");
+    Serial.println("  RESET_GALLERY  Reset gallery (lock all)");
+    Serial.println("--- Power ---");
+    Serial.println("  bright <0-15>  Set screen brightness");
+    Serial.println("  dim <0-15>     Set dim brightness");
+    Serial.println("  dim_t <sec>    Set dim timeout");
+    Serial.println("  off_t <sec>    Set off timeout");
+    Serial.println("  pwrsave        Save power config to NVS");
+    Serial.println("  pwrinfo        Print power config");
 #if ENABLE_SERIAL_INPUT_DEBUG
     Serial.println("--- Button Simulation ---");
     Serial.println("  btn l|m|r      Simulate short press");
@@ -466,6 +485,7 @@ void processCommand(const char* cmd) {
         SaveResult r = saveManager.save(pet, timeManager.now());
         if (r == SAVE_OK) {
             saveManager.markSaved(timeManager.now());
+            saveManager.saveGallery(gallerySystem.getData());
             Serial.println("[Save] OK");
             DisplayManager::showToast("Saved", 1000);
         } else {
@@ -501,6 +521,18 @@ void processCommand(const char* cmd) {
         saveManager.markSaved(now);
         Serial.println("[Debug] 已强制切换为 Nobu");
         printStatus();
+        return;
+    }
+    if (strcmp(cmd, "UNLOCK_ALL") == 0) {
+        gallerySystem.unlockAll();
+        saveManager.saveGallery(gallerySystem.getData());
+        Serial.println("[Debug] All gallery forms unlocked and saved");
+        return;
+    }
+    if (strcmp(cmd, "RESET_GALLERY") == 0) {
+        gallerySystem.resetGallery();
+        saveManager.saveGallery(gallerySystem.getData());
+        Serial.println("[Debug] Gallery reset (all forms locked) and saved");
         return;
     }
     if (strcmp(cmd, "grad") == 0) {
@@ -727,6 +759,10 @@ void setup() {
 
     timeManager.init();
     saveManager.init();
+
+    // 初始化图鉴系统
+    gallerySystem.init();
+
     if (saveManager.hasSave()) {
         if (saveManager.load(pet) == SAVE_OK) {
             Serial.println("[Main] Save loaded");
@@ -738,6 +774,10 @@ void setup() {
                 Serial.printf("[Main] Last save time: %lu\n", loadedSaveTime);
                 Serial.println("[Main] *** Please set current time via: SET_TIME <unix_timestamp> ***");
             }
+            // 加载图鉴数据 (旧存档兼容: 无数据则初始化为空)
+            saveManager.loadGallery(gallerySystem.getData());
+            // 确保当前形态已解锁
+            gallerySystem.unlockForm(pet.form);
         } else {
             Serial.println("[Main] Save corrupted, new game");
             DisplayManager::showSaveCorruptedNewGame();
@@ -747,6 +787,8 @@ void setup() {
         Serial.println("[Main] New game");
         DisplayManager::showNewGame();
         pet.initNew(timeManager.now());
+        // 新游戏: 解锁初始形态
+        gallerySystem.unlockForm(pet.form);
     }
 
     menuController.init(&pet, &gameCallbacks);

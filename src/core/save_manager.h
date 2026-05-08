@@ -4,6 +4,7 @@
 #define SAVE_MANAGER_H
 
 #include "game_state.h"
+#include "../pet/gallery.h"
 #include <stdint.h>
 #include <stddef.h>
 
@@ -55,6 +56,10 @@ public:
 
     // 获取最近一次成功 load 的存档时间 (0 = 无存档/新游戏)
     uint32_t getLastSaveTime() const { return _loadedSaveTime; }
+
+    // --- 图鉴存档 (独立 NVS key, 与主存档分离) ---
+    SaveResult saveGallery(const GalleryData& gallery);
+    SaveResult loadGallery(GalleryData& gallery);
 
 private:
     bool _initialized = false;

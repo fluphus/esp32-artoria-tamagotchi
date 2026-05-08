@@ -114,6 +114,8 @@ void InputManager::buildMappingTable() {
     addMapping(UI_IDLE, BTN_L, BTN_EVENT_PRESS, INPUT_FEED_START);
     // 中键: 查看状态面板
     addMapping(UI_IDLE, BTN_M, BTN_EVENT_PRESS, INPUT_STATUS_VIEW);
+    // 中键长按: 打开图鉴
+    addMapping(UI_IDLE, BTN_M, BTN_EVENT_LONG_PRESS, INPUT_GALLERY_OPEN);
     // 右键: 戳一戳
     addMapping(UI_IDLE, BTN_R, BTN_EVENT_PRESS, INPUT_POKE);
 
@@ -122,6 +124,8 @@ void InputManager::buildMappingTable() {
     // ========================================================================
     // 中键: 关闭状态面板
     addMapping(UI_STATUS, BTN_M, BTN_EVENT_PRESS, INPUT_STATUS_VIEW);
+    // 中键长按: 打开图鉴 (从状态面板直接进入, 处理长按时PRESS已先触发的情况)
+    addMapping(UI_STATUS, BTN_M, BTN_EVENT_LONG_PRESS, INPUT_GALLERY_OPEN);
 
     // ========================================================================
     // UI_FEED_PICK - 食物选择界面 (选3张)
@@ -169,4 +173,14 @@ void InputManager::buildMappingTable() {
     // UI_FEED_DRAW - 投喂抽卡展示 (等待动画完成后自动切换到 FEED_PICK)
     // ========================================================================
     // 无映射, 等待动画
+
+    // ========================================================================
+    // UI_GALLERY - 图鉴浏览界面
+    // ========================================================================
+    // 左键: 光标左移 / 翻页
+    addMapping(UI_GALLERY, BTN_L, BTN_EVENT_PRESS, INPUT_GALLERY_NAV_LEFT);
+    // 右键: 光标右移 / 翻页
+    addMapping(UI_GALLERY, BTN_R, BTN_EVENT_PRESS, INPUT_GALLERY_NAV_RIGHT);
+    // 中键: 退出图鉴
+    addMapping(UI_GALLERY, BTN_M, BTN_EVENT_PRESS, INPUT_GALLERY_CLOSE);
 }

@@ -5,6 +5,7 @@
 #include "display_renderer.h"
 #include "../config/food_table.h"
 #include "../config/game_config.h"
+#include "../pet/gallery.h"
 #include <Arduino.h>
 
 // ============================================================================
@@ -146,6 +147,37 @@ void DisplayRenderer::drawWaitTimeSet(const DisplayModel& model) {
     Serial.println("[Display] --- WAITING FOR TIME ---");
     Serial.println("[Display]   Please set time via serial:");
     Serial.println("[Display]   SET_TIME <unix_timestamp>");
+}
+
+void DisplayRenderer::drawGallery(const DisplayModel& model) {
+    Serial.println("[Display] --- GALLERY ---");
+    uint8_t page = model.galleryPage;
+    uint8_t selected = model.gallerySelectedIndex;
+    uint8_t itemsOnPage = model.galleryItemsThisPage;
+    uint8_t totalPages = (model.galleryTotalForms + GALLERY_ITEMS_PER_PAGE - 1) / GALLERY_ITEMS_PER_PAGE;
+
+    Serial.printf("[Display]   Page %d/%d | Items on page: %d\n",
+                  page + 1, totalPages, itemsOnPage);
+
+    // 计算本页包含的形态
+    uint8_t startIdx = page * GALLERY_ITEMS_PER_PAGE;
+    Serial.print("[Display]   Forms: [");
+    for (uint8_t i = 0; i < itemsOnPage; i++) {
+        Form f = (Form)(startIdx + i);
+        bool unlocked = gallerySystem.isFormUnlocked(f);
+        if (i > 0) Serial.print(", ");
+        Serial.printf("%s(%s)", FORM_NAMES[f], unlocked ? "Unlocked" : "Locked");
+    }
+    Serial.println("]");
+
+    // 当前光标选中
+    Form selectedForm = (Form)(startIdx + selected);
+    bool selectedUnlocked = gallerySystem.isFormUnlocked(selectedForm);
+    Serial.printf("[Display]   Cursor -> [%d] %s (%s)\n",
+                  selected, FORM_NAMES[selectedForm],
+                  selectedUnlocked ? "Unlocked" : "Locked");
+    Serial.printf("[Display]   Total unlocked: %d/%d\n",
+                  gallerySystem.getData().getUnlockedCount(), model.galleryTotalForms);
 }
 
 void DisplayRenderer::drawToast(const DisplayModel& model) {
@@ -837,6 +869,65 @@ void DisplayRenderer::drawWaitTimeSet(const DisplayModel& model) {
 
     tft.setTextColor(COLOR_TEXT_DIM, COLOR_BG);
     tft.drawString("Waiting...", SCREEN_WIDTH / 2, 100);
+
+    tft.setTextDatum(TL_DATUM);
+}
+
+void DisplayRenderer::drawGallery(const DisplayModel& model) {
+    tft.fillScreen(COLOR_BG);
+    tft.setTextSize(1);
+    tft.setTextDatum(TC_DATUM);
+
+    // 标题
+    uint8_t totalPages = (model.galleryTotalForms + GALLERY_ITEMS_PER_PAGE - 1) / GALLERY_ITEMS_PER_PAGE;
+    char titleBuf[32];
+    snprintf(titleBuf, sizeof(titleBuf), "GALLERY %d/%d", model.galleryPage + 1, totalPages);
+    tft.setTextColor(COLOR_TEXT, COLOR_BG);
+    tft.drawString(titleBuf, SCREEN_WIDTH / 2, 2);
+
+    // 2x2 网格绘制占位
+    uint8_t startIdx = model.galleryPage * GALLERY_ITEMS_PER_PAGE;
+    const int16_t gridX = 8;
+    const int16_t gridY = 16;
+    const int16_t cellW = 56;
+    const int16_t cellH = 52;
+    const int16_t gapX = 8;
+    const int16_t gapY = 6;
+
+    for (uint8_t i = 0; i < model.galleryItemsThisPage; i++) {
+        uint8_t row = i / 2;
+        uint8_t col = i % 2;
+        int16_t x = gridX + col * (cellW + gapX);
+        int16_t y = gridY + row * (cellH + gapY);
+
+        Form f = (Form)(startIdx + i);
+        bool unlocked = gallerySystem.isFormUnlocked(f);
+
+        // 高亮边框
+        uint16_t borderColor = (i == model.gallerySelectedIndex) ? COLOR_HIGHLIGHT : COLOR_TEXT_DIM;
+        tft.drawRect(x, y, cellW, cellH, borderColor);
+
+        // 内容: 占位矩形 + 名称
+        if (unlocked) {
+            tft.fillRect(x + 2, y + 2, cellW - 4, cellH - 14, COLOR_TEXT_DIM);
+            tft.setTextDatum(TC_DATUM);
+            tft.setTextColor(COLOR_TEXT, COLOR_BG);
+            tft.drawString(FORM_NAMES[f], x + cellW / 2, y + cellH - 10);
+        } else {
+            tft.fillRect(x + 2, y + 2, cellW - 4, cellH - 14, COLOR_BG);
+            tft.setTextDatum(TC_DATUM);
+            tft.setTextColor(COLOR_TEXT_DIM, COLOR_BG);
+            tft.drawString("???", x + cellW / 2, y + cellH - 10);
+        }
+    }
+
+    // 底部: 解锁进度
+    char progBuf[24];
+    snprintf(progBuf, sizeof(progBuf), "%d/%d Unlocked",
+             gallerySystem.getData().getUnlockedCount(), model.galleryTotalForms);
+    tft.setTextDatum(TC_DATUM);
+    tft.setTextColor(COLOR_TEXT_DIM, COLOR_BG);
+    tft.drawString(progBuf, SCREEN_WIDTH / 2, SCREEN_HEIGHT - 10);
 
     tft.setTextDatum(TL_DATUM);
 }

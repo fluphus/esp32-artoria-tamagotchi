@@ -117,6 +117,9 @@ void MenuController::handleAction(GameInput action) {
         case UI_DESTROY_CONFIRM:
             handleDestroyConfirm(action);
             break;
+        case UI_GALLERY:
+            handleGallery(action);
+            break;
         default:
             break;
     }
@@ -138,6 +141,14 @@ void MenuController::handleIdle(GameInput action) {
         case INPUT_POKE:
             doPoke();
             break;
+        case INPUT_GALLERY_OPEN:
+            gallerySystem.open();
+            switchContext(UI_GALLERY);
+            DisplayManager::switchPage(PAGE_GALLERY);
+            DisplayManager::showGalleryGrid(
+                gallerySystem.getBrowseState().current_page,
+                gallerySystem.getBrowseState().selected_index);
+            break;
         default:
             break;
     }
@@ -153,6 +164,17 @@ void MenuController::handleStatus(GameInput action) {
             // 再次按下则关闭状态界面
             switchContext(UI_IDLE);
             safeCallback(_callbacks->onStatusClose);
+            break;
+        case INPUT_GALLERY_OPEN:
+            // 长按中键: 从状态面板直接进入图鉴
+            // (处理长按时PRESS已先触发打开了状态面板的情况)
+            safeCallback(_callbacks->onStatusClose);
+            gallerySystem.open();
+            switchContext(UI_GALLERY);
+            DisplayManager::switchPage(PAGE_GALLERY);
+            DisplayManager::showGalleryGrid(
+                gallerySystem.getBrowseState().current_page,
+                gallerySystem.getBrowseState().selected_index);
             break;
         default:
             break;
@@ -481,6 +503,36 @@ void MenuController::cancelDestroy() {
     _destroy.active = false;
     safeCallback(_callbacks->onDestroyCancelled);
     switchContext(UI_IDLE);
+}
+
+// ============================================================================
+//  UI_GALLERY 处理
+// ============================================================================
+
+void MenuController::handleGallery(GameInput action) {
+    switch (action) {
+        case INPUT_GALLERY_CLOSE:
+            gallerySystem.close();
+            switchContext(UI_IDLE);
+            break;
+
+        case INPUT_GALLERY_NAV_LEFT:
+            gallerySystem.navigateLeft();
+            DisplayManager::showGalleryGrid(
+                gallerySystem.getBrowseState().current_page,
+                gallerySystem.getBrowseState().selected_index);
+            break;
+
+        case INPUT_GALLERY_NAV_RIGHT:
+            gallerySystem.navigateRight();
+            DisplayManager::showGalleryGrid(
+                gallerySystem.getBrowseState().current_page,
+                gallerySystem.getBrowseState().selected_index);
+            break;
+
+        default:
+            break;
+    }
 }
 
 void MenuController::injectButton(ButtonId btn, ButtonEventType type) {

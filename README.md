@@ -57,7 +57,8 @@ To switch to Serial placeholder backend (no screen), edit `src/display/display_c
 | Button | Action |
 |--------|--------|
 | L      | Feed (start draw) |
-| M      | Status panel |
+| M (short) | Status panel |
+| M (long)  | Open Gallery |
 | R      | Poke |
 
 ### Status Panel
@@ -78,6 +79,13 @@ To switch to Serial placeholder backend (no screen), edit `src/display/display_c
 | L      | Move cursor up |
 | R      | Move cursor down |
 | M      | Select |
+
+### Gallery
+| Button | Action |
+|--------|--------|
+| L      | Navigate left (with page wrap) |
+| R      | Navigate right (with page wrap) |
+| M      | Close gallery (back to idle) |
 
 ### Destroy Confirm
 | Button | Action |
@@ -164,12 +172,31 @@ Auto-save triggers periodically. It shows a brief toast "Autosaved" at the botto
 s              # Print full status
 h              # Help
 fl             # Food list
-t 60           # Advance 60 minutes
+t <min>        # Advance N minutes
 d              # Advance 1 day (triggers day-end)
 save           # Manual save
 load           # Load save
 erase          # Erase save
 reset          # Destroy and reset pet
+stime Y M D H m  # Set simulated time
+SET_TIME <epoch> # Set system time (unix timestamp, triggers offline compensation)
+hp <val>       # Debug: set health (0-100)
+sr <val>       # Debug: set seriousness (0-100)
+age <val>      # Debug: set age days
+grad           # Debug: force child graduation
+mapo           # Debug: +1 mapo tofu count
+FORCE_NOBU     # Debug: force nobu route
+UNLOCK_ALL     # Debug: unlock all gallery forms
+RESET_GALLERY  # Debug: reset gallery (lock all)
+bright <0-15>  # Set screen brightness
+dim <0-15>     # Set dim brightness
+dim_t <sec>    # Set dim timeout
+off_t <sec>    # Set off timeout
+pwrsave        # Save power config to NVS
+pwrinfo        # Print power config
+btn l|m|r      # Simulate short press
+btnl l|m|r     # Simulate long press
+btnr l|m|r     # Simulate repeat
 ctx            # Show current UI context
 ```
 
