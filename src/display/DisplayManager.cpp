@@ -274,6 +274,7 @@ uint32_t DisplayManager::getAnimDuration(AnimState anim) {
         case ANIM_DAY_END:              return ANIM_DURATION_DAY_END;
         case ANIM_NOBU_EVENT:           return ANIM_DURATION_NOBU_EVENT;
         case ANIM_SAVE:                 return ANIM_DURATION_SAVE;
+        case ANIM_GALLERY_COMPLETE:     return ANIM_DURATION_GALLERY_COMPLETE;
         default:                        return 0;
     }
 }
@@ -640,6 +641,12 @@ void DisplayManager::showGalleryGrid(int page_index, int selected_index) {
     _model.galleryTotalForms = TOTAL_GALLERY_FORMS;
     _model.galleryItemsThisPage = gallerySystem.getItemCountOnPage((uint8_t)page_index);
     markDirty();
+}
+
+void DisplayManager::showGalleryCompleteUnlocked() {
+    // 复用进化页面作为全屏动画容器，保持动画触发/结束流程与其他动画一致
+    switchPage(PAGE_EVOLUTION);
+    setAnimation(ANIM_GALLERY_COMPLETE, ANIM_DURATION_GALLERY_COMPLETE, UI_IDLE);
 }
 
 // --- Toast ---

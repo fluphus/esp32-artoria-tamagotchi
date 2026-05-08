@@ -56,6 +56,7 @@ enum AnimState : uint8_t {
     ANIM_DAY_END,               // 日结算过场
     ANIM_NOBU_EVENT,            // nobu 彩蛋事件 (占位动画)
     ANIM_SAVE,                  // 存档图标闪烁
+    ANIM_GALLERY_COMPLETE,      // 全图鉴解锁特殊动画 (占位)
     ANIM_COUNT
 };
 
@@ -154,6 +155,7 @@ public:
 
     // 图鉴
     static void showGalleryGrid(int page_index, int selected_index);
+    static void showGalleryCompleteUnlocked();
 
     // Toast
     static void showToast(const char* message, uint32_t durationMs = PAGE_DURATION_TOAST);

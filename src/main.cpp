@@ -36,6 +36,9 @@ static void persistGalleryUnlockFromEvolution(const EvolutionResult& r) {
         if (g != SAVE_OK) {
             Serial.println("[Gallery] ERROR: Failed to persist unlock");
         }
+        if (gallerySystem.getData().getUnlockedCount() >= FORM_COUNT) {
+            DisplayManager::showGalleryCompleteUnlocked();
+        }
     }
 }
 
@@ -44,6 +47,9 @@ static void persistCurrentFormUnlock() {
         SaveResult g = saveManager.saveGallery(gallerySystem.getData());
         if (g != SAVE_OK) {
             Serial.println("[Gallery] ERROR: Failed to persist current form unlock");
+        }
+        if (gallerySystem.getData().getUnlockedCount() >= FORM_COUNT) {
+            DisplayManager::showGalleryCompleteUnlocked();
         }
     }
 }
@@ -577,6 +583,9 @@ void processCommand(const char* cmd) {
     if (strcmp(cmd, "UNLOCK_ALL") == 0) {
         gallerySystem.unlockAll();
         saveManager.saveGallery(gallerySystem.getData());
+        if (gallerySystem.getData().getUnlockedCount() >= FORM_COUNT) {
+            DisplayManager::showGalleryCompleteUnlocked();
+        }
         Serial.println("[Debug] All gallery forms unlocked and saved");
         return;
     }

@@ -126,6 +126,7 @@
 #define ANIM_DURATION_DESTROY       2000    // 销毁动画
 #define ANIM_DURATION_DAY_END       1500    // 日结算过场
 #define ANIM_DURATION_SAVE          500     // 存档图标
+#define ANIM_DURATION_GALLERY_COMPLETE 2000 // 全图鉴解锁特殊动画 (占位)
 
 // ============================================================================
 //  页面停留时长 (ms)

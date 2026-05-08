@@ -114,6 +114,11 @@ void DisplayRenderer::drawPoke(const DisplayModel& model) {
 
 void DisplayRenderer::drawEvolution(const DisplayModel& model) {
     Serial.println("[Display] --- EVOLUTION ---");
+    if ((AnimState)model.animState == ANIM_GALLERY_COMPLETE) {
+        bool red = (model.animFrameIndex % 2 == 0);
+        Serial.printf("[Display]   [GALLERY COMPLETE] %s\n", red ? "RED" : "BLUE");
+        return;
+    }
     Serial.printf("[Display]   %s -> %s\n",
         FORM_NAMES[model.evolution.form_before],
         FORM_NAMES[model.evolution.form_after]);
@@ -779,6 +784,13 @@ void DisplayRenderer::drawEvolution(const DisplayModel& model) {
     AnimState anim = (AnimState)model.animState;
     uint8_t frame = model.animFrameIndex;
     bool flash = (frame % 2 == 0);
+
+    // Gallery complete placeholder: fullscreen red/blue alternating
+    if (anim == ANIM_GALLERY_COMPLETE) {
+        uint16_t c = (frame % 2 == 0) ? 0xF800 : 0x001F; // red / blue
+        tft.fillScreen(c);
+        return;
+    }
 
     // Title
     tft.setTextColor(COLOR_EVOLUTION, COLOR_BG);
