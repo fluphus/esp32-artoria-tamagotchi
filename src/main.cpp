@@ -13,6 +13,9 @@
 #include "core/power_manager.h"
 #include <esp_sleep.h>
 #include <esp_random.h>
+#include <esp_system.h>
+#include <esp32/rtc.h>
+#include <driver/rtc_io.h>
 
 // ============================================================================
 //  Serial input debug switch (set to 0 to disable serial button commands)
@@ -28,6 +31,43 @@ static uint8_t cmdLen = 0;
 // 离线补偿: 等待串口设置时间
 static bool waitingForTimeSet = false;
 static uint32_t loadedSaveTime = 0;  // 存档中记录的时间戳
+
+// deep sleep 计时基准（RTC 慢时钟在 deep sleep 期间仍会继续走）
+RTC_DATA_ATTR static uint64_t rtc_us_at_sleep = 0;
+RTC_DATA_ATTR static uint32_t epoch_at_sleep = 0;
+
+static const char* wakeupCauseName(esp_sleep_wakeup_cause_t c) {
+    switch (c) {
+        case ESP_SLEEP_WAKEUP_EXT0: return "EXT0";
+        case ESP_SLEEP_WAKEUP_EXT1: return "EXT1";
+        case ESP_SLEEP_WAKEUP_TIMER: return "TIMER";
+        case ESP_SLEEP_WAKEUP_TOUCHPAD: return "TOUCHPAD";
+        case ESP_SLEEP_WAKEUP_ULP: return "ULP";
+        case ESP_SLEEP_WAKEUP_GPIO: return "GPIO";
+        case ESP_SLEEP_WAKEUP_UART: return "UART";
+        case ESP_SLEEP_WAKEUP_WIFI: return "WIFI";
+        case ESP_SLEEP_WAKEUP_COCPU: return "COCPU";
+        case ESP_SLEEP_WAKEUP_COCPU_TRAP_TRIG: return "COCPU_TRAP";
+        case ESP_SLEEP_WAKEUP_BT: return "BT";
+        default: return "UNDEFINED";
+    }
+}
+
+static const char* resetReasonName(esp_reset_reason_t r) {
+    switch (r) {
+        case ESP_RST_POWERON: return "POWERON";
+        case ESP_RST_EXT: return "EXT";
+        case ESP_RST_SW: return "SW";
+        case ESP_RST_PANIC: return "PANIC";
+        case ESP_RST_INT_WDT: return "INT_WDT";
+        case ESP_RST_TASK_WDT: return "TASK_WDT";
+        case ESP_RST_WDT: return "WDT";
+        case ESP_RST_DEEPSLEEP: return "DEEPSLEEP";
+        case ESP_RST_BROWNOUT: return "BROWNOUT";
+        case ESP_RST_SDIO: return "SDIO";
+        default: return "UNKNOWN";
+    }
+}
 
 static void persistGalleryUnlockFromEvolution(const EvolutionResult& r) {
     if (r.event == EVO_NONE) return;
@@ -721,11 +761,13 @@ void processCommand(const char* cmd) {
     if (strncmp(cmd, "dim_t ", 6) == 0) {
         uint32_t val = strtoul(cmd + 6, nullptr, 10);
         powerManager.setDimTimeout(val);
+        powerManager.onUserActivity();
         return;
     }
     if (strncmp(cmd, "off_t ", 6) == 0) {
         uint32_t val = strtoul(cmd + 6, nullptr, 10);
         powerManager.setOffTimeout(val);
+        powerManager.onUserActivity();
         return;
     }
     if (strcmp(cmd, "pwrsave") == 0) {
@@ -829,16 +871,60 @@ void setup() {
     // 初始化图鉴系统
     gallerySystem.init();
 
+    esp_sleep_wakeup_cause_t wakeCause = esp_sleep_get_wakeup_cause();
+    bool wokeFromDeepSleep = (wakeCause != ESP_SLEEP_WAKEUP_UNDEFINED);
+    Serial.printf("[Boot] Wakeup cause: %s\n", wakeupCauseName(wakeCause));
+
+    esp_reset_reason_t resetReason = esp_reset_reason();
+    Serial.printf("[Boot] Reset reason: %s\n", resetReasonName(resetReason));
+
     if (saveManager.hasSave()) {
         if (saveManager.load(pet) == SAVE_OK) {
             Serial.println("[Main] Save loaded");
             DisplayManager::showSaveLoaded();
             loadedSaveTime = saveManager.getLastSaveTime();
             if (loadedSaveTime > 0) {
-                // 有存档时间记录, 进入等待时间设置状态
-                waitingForTimeSet = true;
                 Serial.printf("[Main] Last save time: %lu\n", loadedSaveTime);
-                Serial.println("[Main] *** Please set current time via: SET_TIME <unix_timestamp> ***");
+
+                // 目标逻辑：
+                // - 真正断电/上电/棕断：需要用户补 Unix 时间（用于离线补偿）
+                // - deep sleep 唤醒：不需要补时，直接用 RTC 推进
+                // - 外部复位（例如串口监视器 DTR/RTS 触发 EN）：不弹补时（但也无法获得真实当前时间）
+                if (resetReason == ESP_RST_DEEPSLEEP || wokeFromDeepSleep) {
+                    uint64_t nowRtcUs = esp_rtc_get_time_us();
+                    uint32_t resumedEpoch = loadedSaveTime;
+                    uint32_t sleptSec = 0;
+                    if (rtc_us_at_sleep != 0 && epoch_at_sleep != 0 && nowRtcUs >= rtc_us_at_sleep) {
+                        sleptSec = (uint32_t)((nowRtcUs - rtc_us_at_sleep) / 1000000ULL);
+                        resumedEpoch = epoch_at_sleep + sleptSec;
+                        Serial.printf("[Boot] Deep sleep elapsed: %lu sec\n", sleptSec);
+                    } else {
+                        Serial.println("[Boot] Deep sleep markers missing; falling back to last save time.");
+                    }
+
+                    // deep sleep 期间的“实时推进”补偿：
+                    // 先回到入睡时刻，再用 sleptSec 做一次性补算（分钟/跨天/进化/终局等）。
+                    if (epoch_at_sleep != 0 && sleptSec > 0) {
+                        TimeInfo base = timeManager.epochToTimeInfo(epoch_at_sleep);
+                        timeManager.setSimulatedTime(base.year, base.month, base.day, base.hour, base.minute);
+                        skipTime(sleptSec);
+                    } else {
+                        TimeInfo t = timeManager.epochToTimeInfo(resumedEpoch);
+                        timeManager.setSimulatedTime(t.year, t.month, t.day, t.hour, t.minute);
+                    }
+                    waitingForTimeSet = false;
+                    powerManager.onWakeFromSleep();
+                    Serial.println("[Boot] Resumed (deep sleep): RTC-based time restore (no SET_TIME).");
+                } else if (resetReason == ESP_RST_POWERON || resetReason == ESP_RST_BROWNOUT) {
+                    waitingForTimeSet = true;
+                    Serial.println("[Main] *** Please set current time via: SET_TIME <unix_timestamp> ***");
+                } else {
+                    // 非断电类复位：不要求用户输入时间戳，直接回到存档时间点继续跑（不做离线补偿）
+                    TimeInfo t = timeManager.epochToTimeInfo(loadedSaveTime);
+                    timeManager.setSimulatedTime(t.year, t.month, t.day, t.hour, t.minute);
+                    waitingForTimeSet = false;
+                    Serial.println("[Boot] Non-power reset: restored to last save time (no SET_TIME).");
+                }
             }
             // 加载图鉴数据 (旧存档兼容: 无数据则初始化为空)
             saveManager.loadGallery(gallerySystem.getData());
@@ -878,10 +964,37 @@ void setup() {
 
 void enterDeepSleep() {
     // 保存当前状态
-    SaveResult r = saveManager.save(pet, timeManager.now());
+    uint32_t nowEpoch = timeManager.now();
+    SaveResult r = saveManager.save(pet, nowEpoch);
     if (r == SAVE_OK) saveManager.markSaved(timeManager.now());
     Serial.println("[Power] Entering deep sleep...");
     Serial.flush();
+
+    // 记录 deep sleep 基准：RTC us + epoch
+    epoch_at_sleep = nowEpoch;
+    rtc_us_at_sleep = esp_rtc_get_time_us();
+
+    // 确保 RTC 外设域保持供电，否则 RTC pullup 可能在 deep sleep 期间失效，导致 EXT1(ANY_LOW) 秒醒
+    esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);
+
+    // 防止“刚入睡就立刻唤醒”：
+    // EXT1(ANY_LOW) 在入睡瞬间如果检测到唤醒脚为低电平会马上唤醒。
+    // 运行态的 INPUT_PULLUP 在 deep sleep 下不一定保持，因此这里为可用的 RTC GPIO 显式开启 RTC 上拉。
+    const gpio_num_t wakePins[] = {
+        (gpio_num_t)PIN_BTN_L,
+        (gpio_num_t)PIN_BTN_M,
+        (gpio_num_t)PIN_BTN_R,
+    };
+    for (gpio_num_t pin : wakePins) {
+        int level = digitalRead((int)pin);
+        Serial.printf("[Sleep] Wake pin GPIO%d level=%d rtc_valid=%d\n",
+                      (int)pin, level, rtc_gpio_is_valid_gpio(pin) ? 1 : 0);
+        if (rtc_gpio_is_valid_gpio(pin)) {
+            rtc_gpio_pulldown_dis(pin);
+            rtc_gpio_pullup_en(pin);
+            rtc_gpio_hold_en(pin);
+        }
+    }
 
     // 配置唤醒源: 任意按键 (GPIO) 唤醒
     uint64_t wakeupMask = 0;
@@ -890,8 +1003,8 @@ void enterDeepSleep() {
     wakeupMask |= (1ULL << PIN_BTN_R);
     esp_sleep_enable_ext1_wakeup(wakeupMask, ESP_EXT1_WAKEUP_ANY_LOW);
 
-    // 配置定时器唤醒: 每60秒唤醒一次以维持游戏计时
-    esp_sleep_enable_timer_wakeup(60ULL * 1000000ULL);
+    // 不再用“每60秒唤醒”来维持计时：
+    // deep sleep 期间由 RTC 计数器自然推进；唤醒时一次性计算经过秒数并补偿。
 
     // 进入 deep sleep
     esp_deep_sleep_start();
