@@ -31,6 +31,8 @@ static uint8_t cmdLen = 0;
 // 离线补偿: 等待串口设置时间
 static bool waitingForTimeSet = false;
 static uint32_t loadedSaveTime = 0;  // 存档中记录的时间戳
+// 仅用于新游戏/坏档重建: 在初始时间确认后按最终时间重建 pet 时间基线
+static bool reinitPetAfterInitialTimeConfirm = false;
 
 // deep sleep 计时基准（RTC 慢时钟在 deep sleep 期间仍会继续走）
 RTC_DATA_ATTR static uint64_t rtc_us_at_sleep = 0;
@@ -253,6 +255,13 @@ static UICallbacks gameCallbacks = {
         } else {
             timeManager.setSimulatedTime(year, month, day, hour, minute);
             Serial.println("[Offline] No compensation needed (no save time or time went backwards).");
+        }
+
+        if (reinitPetAfterInitialTimeConfirm) {
+            pet.initNew(timeManager.now());
+            gallerySystem.unlockForm(pet.form);
+            reinitPetAfterInitialTimeConfirm = false;
+            Serial.println("[Main] Reinitialized new pet with confirmed initial time.");
         }
 
         menuController.switchContext(UI_IDLE);
@@ -587,6 +596,12 @@ void processCommand(const char* cmd) {
             } else {
                 timeManager.setSimulatedTime(t.year, t.month, t.day, t.hour, t.minute);
                 Serial.println("[Offline] No compensation needed (no save time or time went backwards).");
+            }
+            if (reinitPetAfterInitialTimeConfirm) {
+                pet.initNew(timeManager.now());
+                gallerySystem.unlockForm(pet.form);
+                reinitPetAfterInitialTimeConfirm = false;
+                Serial.println("[Main] Reinitialized new pet with confirmed initial time.");
             }
             // 进入正常运行
             menuController.switchContext(UI_IDLE);
@@ -967,6 +982,7 @@ void setup() {
                 Serial.println("[Boot] Resumed (deep sleep): RTC-based time restore.");
             } else if (resetReason == ESP_RST_POWERON || resetReason == ESP_RST_BROWNOUT) {
                 waitingForTimeSet = true;
+                reinitPetAfterInitialTimeConfirm = false;
                 Serial.println("[Main] Power-loss boot: please set current date/time via UI.");
             } else {
                 if (loadedSaveTime > 0) {
@@ -974,6 +990,7 @@ void setup() {
                     timeManager.setSimulatedTime(t.year, t.month, t.day, t.hour, t.minute);
                 }
                 waitingForTimeSet = false;
+                reinitPetAfterInitialTimeConfirm = false;
                 Serial.println("[Boot] Non-power reset: restored to saved time.");
             }
             // 加载图鉴数据 (旧存档兼容: 无数据则初始化为空)
@@ -985,6 +1002,7 @@ void setup() {
             DisplayManager::showSaveCorruptedNewGame();
             pet.initNew(timeManager.now());
             waitingForTimeSet = true;
+            reinitPetAfterInitialTimeConfirm = true;
         }
     } else {
         Serial.println("[Main] New game");
@@ -993,6 +1011,7 @@ void setup() {
         // 新游戏: 解锁初始形态
         gallerySystem.unlockForm(pet.form);
         waitingForTimeSet = true;
+        reinitPetAfterInitialTimeConfirm = true;
     }
 
     menuController.init(&pet, &gameCallbacks);
