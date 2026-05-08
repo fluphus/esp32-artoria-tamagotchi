@@ -447,9 +447,9 @@ void MenuController::executeDestroy() {
 
     // nobu 路线判定
     uint32_t roll = esp_random() % 1000;
-    uint32_t threshold = 25;  // 2.5%
-    if (prevAgeDays >= 5) {   // 第6天
-        threshold = 50;       // 5%
+    uint32_t threshold = NOBU_BASE_PERMILLE;
+    if (prevAgeDays == 5) {   // 仅第6天概率翻倍
+        threshold = NOBU_DAY6_PERMILLE;
     }
 
     Serial.println("[MC] 开始进行 Nobu 路线判定...");

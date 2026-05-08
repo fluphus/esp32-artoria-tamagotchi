@@ -334,9 +334,9 @@ void doReset() {
 
     // nobu 彩蛋判定 (与 executeDestroy 逻辑一致)
     uint32_t roll = esp_random() % 1000;
-    uint32_t threshold = 25;  // 2.5%
-    if (prevAgeDays >= 5) {   // 第6天
-        threshold = 50;       // 5%
+    uint32_t threshold = NOBU_BASE_PERMILLE;
+    if (prevAgeDays == 5) {   // 仅第6天概率翻倍
+        threshold = NOBU_DAY6_PERMILLE;
     }
 
     Serial.println("[Reset] 开始计算 Nobu 触发概率...");

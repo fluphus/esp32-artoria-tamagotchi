@@ -60,6 +60,10 @@
 #define SAVE_NVS_NAMESPACE          "fate_tama"
 #define SAVE_DATA_VERSION           7       // 版本号升级 (增加 nobu 彩蛋 + power config)
 
+// --- Nobu 彩蛋触发概率 (‰, 千分比) ---
+#define NOBU_BASE_PERMILLE          25      // 基础触发概率 25/1000 = 2.5%
+#define NOBU_DAY6_PERMILLE          250      // 第6天(仅当天)触发概率 250/1000 = 25%
+
 // --- 销毁 ---
 #define DESTROY_COMBO_HOLD_MS       3000
 
