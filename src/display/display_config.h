@@ -10,8 +10,8 @@
 //  显示后端选择 (只启用一个)
 // ============================================================================
 
-#define DISPLAY_BACKEND_SERIAL_PLACEHOLDER  1   // Serial 占位输出 (无真实屏幕)
-#define DISPLAY_BACKEND_TFT_ESPI            0   // TFT_eSPI 驱动 (SSD1351 128x128)
+#define DISPLAY_BACKEND_SERIAL_PLACEHOLDER  0   // Serial 占位输出 (无真实屏幕)
+#define DISPLAY_BACKEND_TFT_ESPI            1   // TFT_eSPI 驱动 (SSD1351 128x128)
 #define DISPLAY_BACKEND_LOVYANGFX           0   // LovyanGFX 驱动
 #define DISPLAY_BACKEND_U8G2                0   // U8g2 驱动
 

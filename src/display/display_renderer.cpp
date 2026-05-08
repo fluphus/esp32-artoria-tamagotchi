@@ -205,6 +205,15 @@ void DisplayRenderer::drawTextCentered(int16_t y, const char* text) {
     Serial.printf("[Display]   [center@%d] %s\n", y, text);
 }
 
+void DisplayRenderer::sendCommand(uint8_t cmd) {
+    (void)cmd;
+}
+
+void DisplayRenderer::sendCommandWithData(uint8_t cmd, uint8_t data) {
+    (void)cmd;
+    (void)data;
+}
+
 #endif // DISPLAY_BACKEND_SERIAL_PLACEHOLDER
 
 // ============================================================================
@@ -213,10 +222,84 @@ void DisplayRenderer::drawTextCentered(int16_t y, const char* text) {
 
 #if DISPLAY_BACKEND_TFT_ESPI
 
-#include <TFT_eSPI.h>
+#include <SPI.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1351.h>
+#include <stdarg.h>
 #include "DisplayManager.h"
 
-TFT_eSPI tft = TFT_eSPI();
+enum {
+    TL_DATUM = 0,
+    TC_DATUM = 1,
+    TR_DATUM = 2,
+    BC_DATUM = 3,
+    MC_DATUM = 4
+};
+
+class TFTCompat {
+public:
+    TFTCompat() : _disp(SCREEN_WIDTH, SCREEN_HEIGHT, &SPI, TFT_CS_PIN, TFT_DC_PIN, TFT_RST_PIN) {}
+
+    void init() { _disp.begin(); }
+    void setRotation(uint8_t r) { _disp.setRotation(r); }
+    void fillScreen(uint16_t c) { _disp.fillScreen(c); }
+    void setTextColor(uint16_t fg, uint16_t bg) {
+        _fg = fg;
+        _bg = bg;
+        _disp.setTextColor(fg, bg);
+    }
+    void setTextSize(uint8_t s) { _disp.setTextSize(s); }
+    void setTextDatum(uint8_t d) { _datum = d; }
+    void setCursor(int16_t x, int16_t y) { _disp.setCursor(x, y); }
+    void print(const char* s) { _disp.print(s); }
+    void print(int v) { _disp.print(v); }
+    void printf(const char* fmt, ...) {
+        char buf[128];
+        va_list args;
+        va_start(args, fmt);
+        vsnprintf(buf, sizeof(buf), fmt, args);
+        va_end(args);
+        _disp.print(buf);
+    }
+    void drawString(const char* s, int16_t x, int16_t y) {
+        int16_t x1, y1;
+        uint16_t w, h;
+        _disp.getTextBounds((char*)s, 0, 0, &x1, &y1, &w, &h);
+        int16_t tx = x;
+        int16_t ty = y;
+        if (_datum == TC_DATUM || _datum == BC_DATUM || _datum == MC_DATUM) tx = x - (int16_t)w / 2;
+        if (_datum == TR_DATUM) tx = x - (int16_t)w;
+        if (_datum == BC_DATUM || _datum == MC_DATUM) ty = y - (int16_t)h / 2;
+        _disp.setCursor(tx, ty);
+        _disp.setTextColor(_fg, _bg);
+        _disp.print(s);
+    }
+    void drawRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t c) { _disp.drawRect(x, y, w, h, c); }
+    void fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t c) { _disp.fillRect(x, y, w, h, c); }
+    void drawLine(int16_t x0, int16_t y0, int16_t x1, int16_t y1, uint16_t c) { _disp.drawLine(x0, y0, x1, y1, c); }
+    void drawCircle(int16_t x, int16_t y, int16_t r, uint16_t c) { _disp.drawCircle(x, y, r, c); }
+    void fillCircle(int16_t x, int16_t y, int16_t r, uint16_t c) { _disp.fillCircle(x, y, r, c); }
+    void fillTriangle(int16_t x0, int16_t y0, int16_t x1, int16_t y1, int16_t x2, int16_t y2, uint16_t c) {
+        _disp.fillTriangle(x0, y0, x1, y1, x2, y2, c);
+    }
+    void pushImage(int16_t x, int16_t y, int16_t w, int16_t h, const uint16_t* data) {
+        _disp.drawRGBBitmap(x, y, data, w, h);
+    }
+    void sendCommand(uint8_t cmd) {
+        _disp.sendCommand(cmd);
+    }
+    void sendCommandWithData(uint8_t cmd, uint8_t data) {
+        _disp.sendCommand(cmd, &data, 1);
+    }
+
+private:
+    Adafruit_SSD1351 _disp;
+    uint8_t _datum = TL_DATUM;
+    uint16_t _fg = COLOR_TEXT;
+    uint16_t _bg = COLOR_BG;
+};
+
+TFTCompat tft;
 
 // --- Helper: get HP bar color based on value ---
 static uint16_t getHPColor(int16_t hp) {
@@ -232,6 +315,9 @@ static uint16_t getSRColor(int16_t sr) {
 }
 
 void DisplayRenderer::init() {
+    // On ESP32-S3 with custom pin mapping, explicitly start SPI first.
+    // This avoids rare null bus state inside TFT_eSPI::init()/writecommand().
+    SPI.begin(TFT_SCLK_PIN, -1, TFT_MOSI_PIN, TFT_CS_PIN);
     tft.init();
     tft.setRotation(SCREEN_ROTATION);
     tft.fillScreen(COLOR_BG);
@@ -861,6 +947,14 @@ void DisplayRenderer::drawTextCentered(int16_t y, const char* text) {
     tft.setTextDatum(TC_DATUM);
     tft.drawString(text, SCREEN_WIDTH / 2, y);
     tft.setTextDatum(TL_DATUM);
+}
+
+void DisplayRenderer::sendCommand(uint8_t cmd) {
+    tft.sendCommand(cmd);
+}
+
+void DisplayRenderer::sendCommandWithData(uint8_t cmd, uint8_t data) {
+    tft.sendCommandWithData(cmd, data);
 }
 
 void DisplayRenderer::drawWaitTimeSet(const DisplayModel& model) {

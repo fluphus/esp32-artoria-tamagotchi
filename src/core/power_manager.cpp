@@ -3,12 +3,12 @@
 
 #include "power_manager.h"
 #include "../display/display_config.h"
+#include "../display/display_renderer.h"
 #include <Arduino.h>
 #include <Preferences.h>
 
 #if DISPLAY_BACKEND_TFT_ESPI
-#include <TFT_eSPI.h>
-extern TFT_eSPI tft;  // 在 display_renderer.cpp 中定义
+// Command passthrough is provided by DisplayRenderer.
 #endif
 
 PowerManager powerManager;
@@ -154,10 +154,8 @@ void PowerManager::screenOff() {
 
 void PowerManager::applyBrightness(uint8_t level) {
 #if DISPLAY_BACKEND_TFT_ESPI
-    // SSD1351 master contrast: 通过 TFT_eSPI 的 writecommand/writedata
     if (level > 15) level = 15;
-    tft.writecommand(SSD1351_CMD_CONTRASTMASTER);
-    tft.writedata(level);
+    DisplayRenderer::sendCommandWithData(SSD1351_CMD_CONTRASTMASTER, level);
 #endif
     // Serial placeholder: 仅打印
 #if DISPLAY_BACKEND_SERIAL_PLACEHOLDER
@@ -167,7 +165,7 @@ void PowerManager::applyBrightness(uint8_t level) {
 
 void PowerManager::displaySleep() {
 #if DISPLAY_BACKEND_TFT_ESPI
-    tft.writecommand(SSD1351_CMD_DISPLAYOFF);
+    DisplayRenderer::sendCommand(SSD1351_CMD_DISPLAYOFF);
 #endif
 #if DISPLAY_BACKEND_SERIAL_PLACEHOLDER
     Serial.println("[Power] Display OFF");
@@ -176,7 +174,7 @@ void PowerManager::displaySleep() {
 
 void PowerManager::displayWake() {
 #if DISPLAY_BACKEND_TFT_ESPI
-    tft.writecommand(SSD1351_CMD_DISPLAYON);
+    DisplayRenderer::sendCommand(SSD1351_CMD_DISPLAYON);
 #endif
 #if DISPLAY_BACKEND_SERIAL_PLACEHOLDER
     Serial.println("[Power] Display ON");

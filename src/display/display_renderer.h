@@ -48,6 +48,10 @@ public:
 
     // 绘制文本 (居中)
     static void drawTextCentered(int16_t y, const char* text);
+
+    // --- 底层命令透传 (给电源管理等模块使用) ---
+    static void sendCommand(uint8_t cmd);
+    static void sendCommandWithData(uint8_t cmd, uint8_t data);
 };
 
 #endif // DISPLAY_RENDERER_H
