@@ -488,6 +488,14 @@ void MenuController::executeDestroy() {
 
     feedingSystem.resetDaily(*_pet, timeManager.getDay());
 
+    // 销毁/重置后当前形态也应计入图鉴
+    if (gallerySystem.unlockForm(_pet->form)) {
+        SaveResult g = saveManager.saveGallery(gallerySystem.getData());
+        if (g != SAVE_OK) {
+            Serial.println("[MC] Gallery save failed after destroy/reset");
+        }
+    }
+
     _feed.active = false;
     _combo_pending = false;
     _destroy.active = false;

@@ -29,6 +29,16 @@ static uint8_t cmdLen = 0;
 static bool waitingForTimeSet = false;
 static uint32_t loadedSaveTime = 0;  // 存档中记录的时间戳
 
+static void persistGalleryUnlockFromEvolution(const EvolutionResult& r) {
+    if (r.event == EVO_NONE) return;
+    if (gallerySystem.unlockForm(r.form_after)) {
+        SaveResult g = saveManager.saveGallery(gallerySystem.getData());
+        if (g != SAVE_OK) {
+            Serial.println("[Gallery] ERROR: Failed to persist unlock");
+        }
+    }
+}
+
 // ============================================================================
 //  UICallbacks implementation (updates DisplayManager)
 // ============================================================================
@@ -130,10 +140,8 @@ static UICallbacks gameCallbacks = {
         Serial.printf("[MC] Evolution: %s -> %s (SR=%d)\n",
             FORM_NAMES[r.form_before], FORM_NAMES[r.form_after], srAfter);
         DisplayManager::showEvolutionEvent(r, srAfter);
-        // 图鉴: 解锁新形态
-        if (gallerySystem.unlockForm(r.form_after)) {
-            saveManager.saveGallery(gallerySystem.getData());
-        }
+        // 图鉴: 解锁新形态并持久化
+        persistGalleryUnlockFromEvolution(r);
     },
     // onContextChange
     [](UIContext from, UIContext to) {
@@ -327,6 +335,7 @@ void doDayEnd() {
     if (evo.event == EVO_CHILD_TO_WHITE || evo.event == EVO_CHILD_TO_BLACK) {
         Serial.printf("[DayEnd] Graduation: %s\n", EVO_EVENT_NAMES[evo.event]);
         DisplayManager::showChildGraduation(evo, pet.alignment);
+        persistGalleryUnlockFromEvolution(evo);
     } else {
         // 只有非毕业情况才检查成年进??
         if (evo.event == EVO_NONE && pet.stage == STAGE_ADULT)
@@ -334,6 +343,7 @@ void doDayEnd() {
         if (evo.event != EVO_NONE) {
             Serial.printf("[DayEnd] Evo: %s\n", EVO_EVENT_NAMES[evo.event]);
             DisplayManager::showEvolutionEvent(evo, pet.seriousness);
+            persistGalleryUnlockFromEvolution(evo);
         }
     }
 
@@ -367,6 +377,9 @@ void doReset() {
     } else {
         Serial.println("[Reset] 触发判定结果: 失败, 正常重置为 Lily");
         evolutionSystem.destroy(pet, now);
+    }
+    if (gallerySystem.unlockForm(pet.form)) {
+        saveManager.saveGallery(gallerySystem.getData());
     }
 
     feedingSystem.resetDaily(pet, timeManager.getDay());
@@ -542,9 +555,13 @@ void processCommand(const char* cmd) {
         Serial.printf("[Debug] Grad: %s\n", EVO_EVENT_NAMES[r.event]);
         if (r.event == EVO_CHILD_TO_WHITE || r.event == EVO_CHILD_TO_BLACK) {
             DisplayManager::showChildGraduation(r, pet.alignment);
+            persistGalleryUnlockFromEvolution(r);
         }
         EvolutionResult r2 = evolutionSystem.check(pet, timeManager.now());
-        if (r2.event != EVO_NONE) Serial.printf("[Debug] Form: %s\n", FORM_NAMES[r2.form_after]);
+        if (r2.event != EVO_NONE) {
+            Serial.printf("[Debug] Form: %s\n", FORM_NAMES[r2.form_after]);
+            persistGalleryUnlockFromEvolution(r2);
+        }
         printStatus();
         return;
     }
@@ -556,6 +573,7 @@ void processCommand(const char* cmd) {
             EvolutionResult eR = evolutionSystem.checkMapoCurse(pet);
             if (eR.event == EVO_BLACK_RHONGOMYNIAD) {
                 DisplayManager::showEvolutionEvent(eR, pet.seriousness);
+                persistGalleryUnlockFromEvolution(eR);
                 saveManager.save(pet, timeManager.now());
                 saveManager.markSaved(timeManager.now());
             }
@@ -580,6 +598,7 @@ void processCommand(const char* cmd) {
             if (eR.event != EVO_NONE) {
                 Serial.printf("[Idle] Evo: %s\n", EVO_EVENT_NAMES[eR.event]);
                 DisplayManager::showEvolutionEvent(eR, pet.seriousness);
+                persistGalleryUnlockFromEvolution(eR);
             }
         } else Serial.println("[Time] Invalid");
         return;
@@ -870,6 +889,7 @@ void loop() {
                 if (eR.event != EVO_NONE) {
                     Serial.printf("[Idle] Evo: %s\n", EVO_EVENT_NAMES[eR.event]);
                     DisplayManager::showEvolutionEvent(eR, pet.seriousness);
+                    persistGalleryUnlockFromEvolution(eR);
                 }
             }
         }
