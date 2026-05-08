@@ -52,6 +52,9 @@ public:
     // --- 底层命令透传 (给电源管理等模块使用) ---
     static void sendCommand(uint8_t cmd);
     static void sendCommandWithData(uint8_t cmd, uint8_t data);
+
+    // 提交双缓冲帧到物理屏幕
+    static void present();
 };
 
 #endif // DISPLAY_RENDERER_H

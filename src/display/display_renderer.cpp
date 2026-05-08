@@ -214,6 +214,8 @@ void DisplayRenderer::sendCommandWithData(uint8_t cmd, uint8_t data) {
     (void)data;
 }
 
+void DisplayRenderer::present() {}
+
 #endif // DISPLAY_BACKEND_SERIAL_PLACEHOLDER
 
 // ============================================================================
@@ -238,52 +240,97 @@ enum {
 
 class TFTCompat {
 public:
-    TFTCompat() : _disp(SCREEN_WIDTH, SCREEN_HEIGHT, &SPI, TFT_CS_PIN, TFT_DC_PIN, TFT_RST_PIN) {}
+    TFTCompat()
+        : _disp(SCREEN_WIDTH, SCREEN_HEIGHT, &SPI, TFT_CS_PIN, TFT_DC_PIN, TFT_RST_PIN),
+          _canvas(SCREEN_WIDTH, SCREEN_HEIGHT) {}
 
     void init() { _disp.begin(); }
     void setRotation(uint8_t r) { _disp.setRotation(r); }
-    void fillScreen(uint16_t c) { _disp.fillScreen(c); }
+    void fillScreen(uint16_t c) {
+        _canvas.fillScreen(c);
+        _dirty = true;
+    }
     void setTextColor(uint16_t fg, uint16_t bg) {
         _fg = fg;
         _bg = bg;
-        _disp.setTextColor(fg, bg);
+        _canvas.setTextColor(fg, bg);
     }
-    void setTextSize(uint8_t s) { _disp.setTextSize(s); }
+    void setTextSize(uint8_t s) { _canvas.setTextSize(s); }
     void setTextDatum(uint8_t d) { _datum = d; }
-    void setCursor(int16_t x, int16_t y) { _disp.setCursor(x, y); }
-    void print(const char* s) { _disp.print(s); }
-    void print(int v) { _disp.print(v); }
+    void setCursor(int16_t x, int16_t y) { _canvas.setCursor(x, y); }
+    void print(const char* s) {
+        _canvas.print(s);
+        _dirty = true;
+    }
+    void print(int v) {
+        _canvas.print(v);
+        _dirty = true;
+    }
     void printf(const char* fmt, ...) {
         char buf[128];
         va_list args;
         va_start(args, fmt);
         vsnprintf(buf, sizeof(buf), fmt, args);
         va_end(args);
-        _disp.print(buf);
+        _canvas.print(buf);
+        _dirty = true;
     }
     void drawString(const char* s, int16_t x, int16_t y) {
         int16_t x1, y1;
         uint16_t w, h;
-        _disp.getTextBounds((char*)s, 0, 0, &x1, &y1, &w, &h);
+        _canvas.getTextBounds((char*)s, 0, 0, &x1, &y1, &w, &h);
         int16_t tx = x;
         int16_t ty = y;
         if (_datum == TC_DATUM || _datum == BC_DATUM || _datum == MC_DATUM) tx = x - (int16_t)w / 2;
         if (_datum == TR_DATUM) tx = x - (int16_t)w;
-        if (_datum == BC_DATUM || _datum == MC_DATUM) ty = y - (int16_t)h / 2;
-        _disp.setCursor(tx, ty);
-        _disp.setTextColor(_fg, _bg);
-        _disp.print(s);
+        if (_datum == BC_DATUM) ty = y - (int16_t)h;
+        if (_datum == MC_DATUM) ty = y - (int16_t)h / 2;
+        _canvas.setCursor(tx, ty);
+        _canvas.setTextColor(_fg, _bg);
+        _canvas.print(s);
+        _dirty = true;
     }
-    void drawRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t c) { _disp.drawRect(x, y, w, h, c); }
-    void fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t c) { _disp.fillRect(x, y, w, h, c); }
-    void drawLine(int16_t x0, int16_t y0, int16_t x1, int16_t y1, uint16_t c) { _disp.drawLine(x0, y0, x1, y1, c); }
-    void drawCircle(int16_t x, int16_t y, int16_t r, uint16_t c) { _disp.drawCircle(x, y, r, c); }
-    void fillCircle(int16_t x, int16_t y, int16_t r, uint16_t c) { _disp.fillCircle(x, y, r, c); }
+    void drawRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t c) {
+        _canvas.drawRect(x, y, w, h, c);
+        _dirty = true;
+    }
+    void fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t c) {
+        _canvas.fillRect(x, y, w, h, c);
+        _dirty = true;
+    }
+    void drawLine(int16_t x0, int16_t y0, int16_t x1, int16_t y1, uint16_t c) {
+        _canvas.drawLine(x0, y0, x1, y1, c);
+        _dirty = true;
+    }
+    void drawCircle(int16_t x, int16_t y, int16_t r, uint16_t c) {
+        _canvas.drawCircle(x, y, r, c);
+        _dirty = true;
+    }
+    void fillCircle(int16_t x, int16_t y, int16_t r, uint16_t c) {
+        _canvas.fillCircle(x, y, r, c);
+        _dirty = true;
+    }
     void fillTriangle(int16_t x0, int16_t y0, int16_t x1, int16_t y1, int16_t x2, int16_t y2, uint16_t c) {
-        _disp.fillTriangle(x0, y0, x1, y1, x2, y2, c);
+        _canvas.fillTriangle(x0, y0, x1, y1, x2, y2, c);
+        _dirty = true;
     }
     void pushImage(int16_t x, int16_t y, int16_t w, int16_t h, const uint16_t* data) {
-        _disp.drawRGBBitmap(x, y, data, w, h);
+        if (w <= 0 || h <= 0 || data == nullptr) return;
+#if DISPLAY_RGB565_SWAP_BYTES
+        if (w > SCREEN_WIDTH) w = SCREEN_WIDTH;
+        static uint16_t rowBuf[SCREEN_WIDTH];
+        for (int16_t row = 0; row < h; ++row) {
+            const uint16_t* src = data + row * w;
+            for (int16_t col = 0; col < w; ++col) {
+                uint16_t p = src[col];
+                rowBuf[col] = (uint16_t)((p << 8) | (p >> 8));
+            }
+            _canvas.drawRGBBitmap(x, y + row, rowBuf, w, 1);
+        }
+#else
+        _canvas.drawRGBBitmap(x, y, data, w, h);
+#endif
+        _dirty = true;
     }
     void sendCommand(uint8_t cmd) {
         _disp.sendCommand(cmd);
@@ -291,12 +338,22 @@ public:
     void sendCommandWithData(uint8_t cmd, uint8_t data) {
         _disp.sendCommand(cmd, &data, 1);
     }
+    void present() {
+        if (!_dirty) return;
+        _disp.startWrite();
+        _disp.setAddrWindow(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+        _disp.writePixels(_canvas.getBuffer(), (uint32_t)SCREEN_WIDTH * SCREEN_HEIGHT, true, false);
+        _disp.endWrite();
+        _dirty = false;
+    }
 
 private:
     Adafruit_SSD1351 _disp;
+    GFXcanvas16 _canvas;
     uint8_t _datum = TL_DATUM;
     uint16_t _fg = COLOR_TEXT;
     uint16_t _bg = COLOR_BG;
+    bool _dirty = true;
 };
 
 TFTCompat tft;
@@ -955,6 +1012,10 @@ void DisplayRenderer::sendCommand(uint8_t cmd) {
 
 void DisplayRenderer::sendCommandWithData(uint8_t cmd, uint8_t data) {
     tft.sendCommandWithData(cmd, data);
+}
+
+void DisplayRenderer::present() {
+    tft.present();
 }
 
 void DisplayRenderer::drawWaitTimeSet(const DisplayModel& model) {

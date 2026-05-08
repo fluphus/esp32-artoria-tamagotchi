@@ -193,6 +193,7 @@ void DisplayManager::renderIfDirty() {
     if (_model.toast[0] != '\0') {
         DisplayRenderer::drawToast(_model);
     }
+    DisplayRenderer::present();
 }
 
 // ============================================================================
