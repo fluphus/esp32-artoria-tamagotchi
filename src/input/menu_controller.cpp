@@ -468,6 +468,12 @@ void MenuController::executeDestroy() {
     uint16_t prevAgeDays = _pet->age_days;
     uint16_t prevRounds = _pet->rounds;
 
+    // 指定轮次保底: round 329 触发 reset 后 (即 rounds=330) 必定进入 Nobu 路线
+    if (((prevRounds > 0) ? prevRounds : 1) == 329) {
+        Serial.println("[MC] Forced Nobu: round 329 -> round 330");
+        evolutionSystem.destroyToNobu(*_pet, now, prevAgeDays);
+        _pet->rounds = 330;
+    } else {
     // nobu 路线判定
     uint32_t roll = esp_random() % 1000;
     uint32_t threshold = NOBU_BASE_PERMILLE;
@@ -487,6 +493,7 @@ void MenuController::executeDestroy() {
         evolutionSystem.destroy(*_pet, now);
     }
     _pet->rounds = ((prevRounds > 0) ? prevRounds : 1) + 1;
+    }
 
     feedingSystem.resetDaily(*_pet, timeManager.getDay());
 

@@ -377,6 +377,21 @@ void doReset() {
     uint16_t prevRounds = pet.rounds;
     DisplayManager::showDestroyExecuted(destroyedForm);
 
+    // 指定轮次保底: round 329 触发 reset 后 (即 rounds=330) 必定进入 Nobu 路线
+    if (((prevRounds > 0) ? prevRounds : 1) == 329) {
+        Serial.println("[Reset] Forced Nobu: round 329 -> round 330");
+        evolutionSystem.destroyToNobu(pet, now, prevAgeDays);
+        pet.rounds = 330;
+        if (gallerySystem.unlockForm(pet.form)) {
+            saveManager.saveGallery(gallerySystem.getData());
+        }
+        feedingSystem.resetDaily(pet, timeManager.getDay());
+        SaveResult r = saveManager.save(pet, timeManager.now());
+        if (r == SAVE_OK) saveManager.markSaved(now);
+        printStatus();
+        return;
+    }
+
     // nobu 彩蛋判定 (与 executeDestroy 逻辑一致)
     uint32_t roll = esp_random() % 1000;
     uint32_t threshold = NOBU_BASE_PERMILLE;
