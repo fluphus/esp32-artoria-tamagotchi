@@ -61,7 +61,7 @@
 #define SAVE_DATA_VERSION           8       // 版本号升级 (增加 rounds 字段)
 
 // --- Nobu 彩蛋触发概率 (‰, 千分比) ---
-#define NOBU_BASE_PERMILLE          25      // 基础触发概率 25/1000 = 2.5%
+#define NOBU_BASE_PERMILLE          10      // 基础触发概率 10/1000 = 1% 某六字紧张刺激的指令卡战斗神秘游戏的神奇妙妙概率
 #define NOBU_DAY6_PERMILLE          250      // 第6天(仅当天)触发概率 250/1000 = 25%
 
 // --- 销毁 ---
