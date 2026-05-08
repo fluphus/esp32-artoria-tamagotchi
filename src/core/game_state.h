@@ -116,6 +116,7 @@ struct PetState {
     uint32_t birth_timestamp;
     uint32_t last_interact_time;
     uint16_t age_days;
+    uint16_t rounds;                  // 当前轮次, 新游戏=1, 每次reset+1
 
     DailyFeedState daily_feed;
 
@@ -146,6 +147,7 @@ struct PetState {
         birth_timestamp = now;
         last_interact_time = now;
         age_days = 0;
+        rounds = 1;
 
         daily_feed.reset(0);
     }

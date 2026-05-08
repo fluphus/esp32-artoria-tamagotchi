@@ -220,6 +220,7 @@ void printStatus() {
         Serial.printf(" / %d (child)\n", CHILD_PERIOD_DAYS);
     else
         Serial.println(" (adult)");
+    Serial.printf("  Rounds:     %d\n", pet.rounds);
     Serial.printf("  Fed today:  %d / %d\n", pet.daily_feed.feed_count, DAILY_FEED_LIMIT);
     if (pet.last_poke_effect_time == 0) {
         Serial.println("  Poke:       available");
@@ -373,6 +374,7 @@ void doReset() {
     uint32_t now = timeManager.now();
     Form destroyedForm = pet.form;
     uint16_t prevAgeDays = pet.age_days;
+    uint16_t prevRounds = pet.rounds;
     DisplayManager::showDestroyExecuted(destroyedForm);
 
     // nobu 彩蛋判定 (与 executeDestroy 逻辑一致)
@@ -392,6 +394,7 @@ void doReset() {
         Serial.println("[Reset] 触发判定结果: 失败, 正常重置为 Lily");
         evolutionSystem.destroy(pet, now);
     }
+    pet.rounds = ((prevRounds > 0) ? prevRounds : 1) + 1;
     if (gallerySystem.unlockForm(pet.form)) {
         saveManager.saveGallery(gallerySystem.getData());
     }
@@ -546,7 +549,9 @@ void processCommand(const char* cmd) {
     if (strcmp(cmd, "FORCE_NOBU") == 0) {
         uint32_t now = timeManager.now();
         uint16_t prevAgeDays = pet.age_days;
+        uint16_t prevRounds = pet.rounds;
         evolutionSystem.destroyToNobu(pet, now, prevAgeDays);
+        pet.rounds = ((prevRounds > 0) ? prevRounds : 1) + 1;
         feedingSystem.resetDaily(pet, timeManager.getDay());
         saveManager.save(pet, timeManager.now());
         saveManager.markSaved(now);

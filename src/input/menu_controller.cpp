@@ -466,6 +466,7 @@ void MenuController::executeDestroy() {
     uint32_t now = timeManager.now();
     Form destroyedForm = _pet->form;
     uint16_t prevAgeDays = _pet->age_days;
+    uint16_t prevRounds = _pet->rounds;
 
     // nobu 路线判定
     uint32_t roll = esp_random() % 1000;
@@ -485,6 +486,7 @@ void MenuController::executeDestroy() {
         Serial.println("[MC] 路线判定结果: 失败, 宠物进化为 Lily");
         evolutionSystem.destroy(*_pet, now);
     }
+    _pet->rounds = ((prevRounds > 0) ? prevRounds : 1) + 1;
 
     feedingSystem.resetDaily(*_pet, timeManager.getDay());
 

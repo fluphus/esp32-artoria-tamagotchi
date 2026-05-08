@@ -58,7 +58,7 @@
 
 // --- 存档 ---
 #define SAVE_NVS_NAMESPACE          "fate_tama"
-#define SAVE_DATA_VERSION           7       // 版本号升级 (增加 nobu 彩蛋 + power config)
+#define SAVE_DATA_VERSION           8       // 版本号升级 (增加 rounds 字段)
 
 // --- Nobu 彩蛋触发概率 (‰, 千分比) ---
 #define NOBU_BASE_PERMILLE          25      // 基础触发概率 25/1000 = 2.5%
