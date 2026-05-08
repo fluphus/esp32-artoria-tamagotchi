@@ -39,6 +39,15 @@ static void persistGalleryUnlockFromEvolution(const EvolutionResult& r) {
     }
 }
 
+static void persistCurrentFormUnlock() {
+    if (gallerySystem.unlockForm(pet.form)) {
+        SaveResult g = saveManager.saveGallery(gallerySystem.getData());
+        if (g != SAVE_OK) {
+            Serial.println("[Gallery] ERROR: Failed to persist current form unlock");
+        }
+    }
+}
+
 // ============================================================================
 //  UICallbacks implementation (updates DisplayManager)
 // ============================================================================
@@ -292,7 +301,9 @@ void doDayEnd() {
     DisplayManager::showDayEndStart();
     uint32_t now = timeManager.now();
 
+    bool wasRhongo = pet.is_rhongomyniad;
     IdleTickResult iR = seriousnessSystem.onIdleBatch(pet, 1440, now);
+    bool rhongoTriggeredInDayEnd = (!wasRhongo && pet.is_rhongomyniad);
     if (iR.tier_changed) {
         Serial.printf("[DayEnd] Idle SR: %d->%d | Tier: %s -> %s\n",
                       iR.seriousness_before, iR.seriousness_after,
@@ -304,6 +315,9 @@ void doDayEnd() {
     if (pet.is_rhongomyniad || pet.is_black_rhongomyniad) {
         Serial.println("[DayEnd] Terminal state reached during idle.");
         DisplayManager::showDayEndTerminalState();
+        if (rhongoTriggeredInDayEnd) {
+            persistCurrentFormUnlock();
+        }
         feedingSystem.resetDaily(pet, timeManager.getDay());
         pet.age_days++;
         saveManager.save(pet, timeManager.now());
@@ -412,9 +426,13 @@ void skipTime(uint32_t offlineSeconds) {
 
     // 结算剩余分钟的严肃值增长
     if (remainingMinutes > 0) {
+        bool wasRhongo = pet.is_rhongomyniad;
         timeManager.advanceMinutes(remainingMinutes);
         uint32_t now = timeManager.now();
         IdleTickResult iR = seriousnessSystem.onIdleBatch(pet, remainingMinutes, now);
+        if (!wasRhongo && pet.is_rhongomyniad) {
+            persistCurrentFormUnlock();
+        }
         if (iR.tier_changed) {
             Serial.printf("[Offline] Tier: %s -> %s\n", TIER_NAMES[iR.tier_before], TIER_NAMES[iR.tier_after]);
             EvolutionResult eR = evolutionSystem.check(pet, now);
@@ -881,7 +899,11 @@ void loop() {
     // Idle tick: seriousness growth + rhongo timer
     if (timeManager.checkNewMinute()) {
         if (!pet.is_rhongomyniad && !pet.is_black_rhongomyniad) {
+            bool wasRhongo = pet.is_rhongomyniad;
             IdleTickResult iR = seriousnessSystem.onIdleTick(pet, now);
+            if (!wasRhongo && pet.is_rhongomyniad) {
+                persistCurrentFormUnlock();
+            }
             if (iR.tier_changed) {
                 Serial.printf("[Idle] Tier: %s -> %s\n", TIER_NAMES[iR.tier_before], TIER_NAMES[iR.tier_after]);
                 DisplayManager::showIdleTierChange(iR.tier_before, iR.tier_after);
