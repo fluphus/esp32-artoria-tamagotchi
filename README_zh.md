@@ -8,7 +8,7 @@
 ## ✨ 特性
 * **进化系统：** 基于宠物状态（健康度、严肃度等）的多条成长路线。
 * **时间与日期管理：** 内置时钟用于处理每日重置，以及未按时喂食的惩罚。
-* **持久化存储：** 带有校验和验证的自动存档/读档系统（防止断电导致数据损坏）。
+* **持久化存储：** 三槽存档系统，支持校验和验证、按槽串口导入导出，以及导入后时间对齐保护流程。
 * **互动操作：** 喂食、戳一戳（互动）以及状态监控。
 * **显示：** 通过 TFT_eSPI 驱动的 SSD1351 128x128 65K 彩色 OLED，并提供用于无头测试的串口占位符后端。
 
@@ -188,6 +188,14 @@ mapo           # 调试: 麻婆豆腐计数 +1
 FORCE_NOBU     # 调试: 强制进入 nobu 路线
 UNLOCK_ALL     # 调试: 解锁所有图鉴形态
 RESET_GALLERY  # 调试: 重置图鉴 (锁定所有)
+IMPORT_TIME_SETUP  # 强制进入“导入后设时”界面 (不做离线补偿)
+SAVE_SLOT_STATUS   # 打印 slot0/1/2 状态 (seq/time/ver/size/crc)
+SAVE_EXPORT <slot> # 通过串口导出单槽快照 (hex 流)
+SAVE_IMPORT_BEGIN <slot> # 开始单槽导入会话
+SAVE_IMPORT_DATA <hex>   # 追加一段 hex 负载
+SAVE_IMPORT_COMMIT       # 提交导入负载
+SAVE_IMPORT_ABORT        # 取消导入会话
+s0 / s1 / s2   # 打印单槽快照状态
 bright <0-15>  # 设置屏幕亮度
 dim <0-15>     # 设置息屏亮度
 dim_t <sec>    # 设置息屏超时 (秒)
@@ -199,6 +207,42 @@ btnl l|m|r     # 模拟长按
 btnr l|m|r     # 模拟连按
 ctx            # 显示当前 UI 上下文
 ```
+
+## 串口存档导入/导出
+
+项目已支持按槽位的串口导入导出，用于备份和迁移流程。
+
+### 固件侧命令
+
+- `SAVE_SLOT_STATUS`：查询全部槽位状态（`slot0`、`slot1`、`slot2`）。
+- `SAVE_EXPORT <slot>`：导出指定槽位为 hex 数据块。
+- `SAVE_IMPORT_BEGIN <slot>` -> `SAVE_IMPORT_DATA <hex>` -> `SAVE_IMPORT_COMMIT`：导入指定槽位负载。
+- `SAVE_IMPORT_ABORT`：中止当前导入会话。
+- `s0` / `s1` / `s2`：按状态格式打印单槽快照。
+
+### 主机侧辅助脚本（Python）
+
+在 `SaveManager` 目录运行：
+
+```bash
+py save_manager.py
+```
+
+或使用命令行模式：
+
+```bash
+py save_manager.py --port COM5 status
+py save_manager.py --port COM5 export --slot 0 --out slot0.bin
+py save_manager.py --port COM5 import --slot 1 --in slot0.bin
+```
+
+### 导入行为（重要）
+
+- 导入槽一定会加入活动存档槽对。
+- 其余两个槽中会选“更旧”的一个作为另一活动槽。
+- 剩余槽会被冻结，不再参与后续自动/手动覆盖轮转。
+- 导入完成后设备会强制进入设时流程，并跳过离线补偿。
+- 完成设时后会对齐并持久化导入存档时间；若校验失败，会在后台持续重试直到成功。
 
 ## 页面停留行为 (Page Hold Behavior)
 

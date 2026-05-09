@@ -8,7 +8,7 @@ Raise your own Artoria! Start your journey with Saber Lily and guide her growth.
 ## ✨ Features
 * **Evolution System:** Multiple growth routes based on pet stats (Health, Seriousness, etc.).
 * **Time & Day Management:** Built-in internal clock to handle daily resets and penalties for missing meals.
-* **Persistent Storage:** Auto save/load system with checksum validation (prevents data corruption on power loss).
+* **Persistent Storage:** 3-slot save system with checksum validation, serial slot import/export, and import-time clock alignment safeguards.
 * **Interactive Actions:** Feed, Poke, and monitor status.
 * **Display:** SSD1351 128x128 65K Color OLED via TFT_eSPI, with Serial placeholder backend for headless testing.
 
@@ -188,6 +188,14 @@ mapo           # Debug: +1 mapo tofu count
 FORCE_NOBU     # Debug: force nobu route
 UNLOCK_ALL     # Debug: unlock all gallery forms
 RESET_GALLERY  # Debug: reset gallery (lock all)
+IMPORT_TIME_SETUP  # Force import-time setup UI (no offline compensation)
+SAVE_SLOT_STATUS   # Print slot0/1/2 status (seq/time/ver/size/crc)
+SAVE_EXPORT <slot> # Export one slot snapshot over serial (hex stream)
+SAVE_IMPORT_BEGIN <slot> # Start slot import session
+SAVE_IMPORT_DATA <hex>   # Append one hex payload chunk
+SAVE_IMPORT_COMMIT       # Commit import payload
+SAVE_IMPORT_ABORT        # Abort import session
+s0 / s1 / s2   # Print per-slot snapshot status
 bright <0-15>  # Set screen brightness
 dim <0-15>     # Set dim brightness
 dim_t <sec>    # Set dim timeout
@@ -199,6 +207,42 @@ btnl l|m|r     # Simulate long press
 btnr l|m|r     # Simulate repeat
 ctx            # Show current UI context
 ```
+
+## Serial Save Import/Export
+
+The project now supports per-slot save import/export over serial for backup and migration workflows.
+
+### Firmware commands
+
+- `SAVE_SLOT_STATUS`: Query slot status for all slots (`slot0`, `slot1`, `slot2`).
+- `SAVE_EXPORT <slot>`: Export one slot as a hex stream block.
+- `SAVE_IMPORT_BEGIN <slot>` -> `SAVE_IMPORT_DATA <hex>` -> `SAVE_IMPORT_COMMIT`: Import one slot payload.
+- `SAVE_IMPORT_ABORT`: Abort the current import session.
+- `s0` / `s1` / `s2`: Print one slot snapshot in status format.
+
+### Host-side helper (Python)
+
+From the `SaveManager` directory:
+
+```bash
+py save_manager.py
+```
+
+Or direct CLI usage:
+
+```bash
+py save_manager.py --port COM5 status
+py save_manager.py --port COM5 export --slot 0 --out slot0.bin
+py save_manager.py --port COM5 import --slot 1 --in slot0.bin
+```
+
+### Import behavior (important)
+
+- The imported slot is always added to the active save pair.
+- From the other two slots, the older one is selected as the second active slot.
+- The remaining slot is frozen and excluded from future auto/manual overwrite rotation.
+- After import, device enters forced time setup mode and skips offline compensation.
+- After time confirmation, imported save time is aligned and persisted; if verification fails, background retry continues until success.
 
 ## Page Hold Behavior
 

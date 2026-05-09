@@ -16,6 +16,7 @@
 #include <esp_system.h>
 #include <esp32/rtc.h>
 #include <driver/rtc_io.h>
+#include <string.h>
 
 // ============================================================================
 //  Serial input debug switch (set to 0 to disable serial button commands)
@@ -33,6 +34,71 @@ static bool waitingForTimeSet = false;
 static uint32_t loadedSaveTime = 0;  // 存档中记录的时间戳
 // 仅用于新游戏/坏档重建: 在初始时间确认后按最终时间重建 pet 时间基线
 static bool reinitPetAfterInitialTimeConfirm = false;
+
+static constexpr size_t SLOT_RAW_BASE_BYTES = sizeof(SaveHeader) + sizeof(PetState);
+static constexpr size_t SLOT_RAW_WITH_GALLERY_BYTES = SLOT_RAW_BASE_BYTES + sizeof(GalleryData);
+static constexpr size_t SLOT_RAW_MAX_BYTES = SLOT_RAW_WITH_GALLERY_BYTES;
+static constexpr size_t EXPORT_LINE_BYTES = 16;
+struct SlotImportSession {
+    bool active = false;
+    uint8_t slot = 0;
+    size_t received = 0;
+    uint8_t invalidCount = 0;
+    uint8_t raw[SLOT_RAW_MAX_BYTES];
+};
+static SlotImportSession g_slotImport;
+static constexpr uint8_t SAVE_IMPORT_INVALID_MAX = 5;
+
+// 串口导入存档后: 下一遍时间确认不触发离线结算, 且确认后将 save_time 写入 NVS 与当前时钟对齐
+static bool _importFreshClockPersistPending = false;
+static bool _importAlignRetryPending = false;
+static uint32_t _importAlignEpochPending = 0;
+static uint32_t _importAlignLastRetryMs = 0;
+static uint32_t _importAlignLastLogMs = 0;
+static constexpr uint32_t IMPORT_ALIGN_RETRY_INTERVAL_MS = 3000;
+
+static void finalizeImportAlignedSaveIfNeeded(uint32_t saveEpoch) {
+    if (!_importFreshClockPersistPending)
+        return;
+    _importFreshClockPersistPending = false;
+    SaveResult r = saveManager.save(pet, saveEpoch);
+    bool verified = (r == SAVE_OK) && saveManager.verifyLatestSave(saveEpoch, pet);
+    if (!verified) {
+        if (r != SAVE_OK) {
+            Serial.printf("[ImportClock] WARN: save failed (%d), will retry in background\n", (int)r);
+        } else {
+            Serial.println("[ImportClock] WARN: verifyLatestSave failed, will retry in background");
+        }
+        _importAlignRetryPending = true;
+        _importAlignEpochPending = saveEpoch;
+        loadedSaveTime = 0;
+        // 保持 importTimeSetupRequired=true，直到后台重试成功
+        return;
+    }
+
+    saveManager.markSaved(saveEpoch);
+    (void)saveManager.saveGallery(gallerySystem.getData());
+    saveManager.setImportTimeSetupRequired(false);
+    loadedSaveTime = saveEpoch;
+    _importAlignRetryPending = false;
+    _importAlignEpochPending = 0;
+    Serial.printf("[ImportClock] NVS aligned (save_time=%lu)\n", (unsigned long)saveEpoch);
+}
+
+// 在 NVS 导入并 load(pet) 成功后调用: 强制进入与 new game 相同的初始时间 UI, 不触发离线结算
+static void beginInitialTimeSetupAfterImportedSave() {
+    _importFreshClockPersistPending = true;
+    _importAlignRetryPending = false;
+    _importAlignEpochPending = 0;
+    _importAlignLastRetryMs = 0;
+    _importAlignLastLogMs = 0;
+    loadedSaveTime = 0;
+    reinitPetAfterInitialTimeConfirm = false;
+    waitingForTimeSet = true;
+    saveManager.setImportTimeSetupRequired(true);
+    Serial.println("[ImportClock] Set current date/time (no offline settlement). Use UI or SET_TIME <epoch>.");
+    menuController.startInitialTimeSetup(timeManager.timeInfoToEpoch(2026, 1, 1, 0, 0, 0));
+}
 
 // deep sleep 计时基准（RTC 慢时钟在 deep sleep 期间仍会继续走）
 RTC_DATA_ATTR static uint64_t rtc_us_at_sleep = 0;
@@ -98,6 +164,50 @@ static void persistCurrentFormUnlock() {
 
 void printStatus();
 void skipTime(uint32_t offlineSeconds);
+static void printStatusForSnapshot(const PetState& p, uint32_t epochNow);
+
+static int hexNibble(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return 10 + (c - 'a');
+    if (c >= 'A' && c <= 'F') return 10 + (c - 'A');
+    return -1;
+}
+
+static bool decodeHexToBytes(const char* hex, uint8_t* out, size_t maxOut, size_t* outLen) {
+    size_t n = strlen(hex);
+    if (n == 0 || (n % 2) != 0) return false;
+    size_t bytes = n / 2;
+    if (bytes > maxOut) return false;
+    for (size_t i = 0; i < bytes; i++) {
+        int hi = hexNibble(hex[i * 2]);
+        int lo = hexNibble(hex[i * 2 + 1]);
+        if (hi < 0 || lo < 0) return false;
+        out[i] = (uint8_t)((hi << 4) | lo);
+    }
+    *outLen = bytes;
+    return true;
+}
+
+static void printHexLine(const uint8_t* data, size_t len) {
+    static const char HEX_MAP[] = "0123456789ABCDEF";
+    char line[EXPORT_LINE_BYTES * 2 + 1];
+    if (len > EXPORT_LINE_BYTES) len = EXPORT_LINE_BYTES;
+    for (size_t i = 0; i < len; i++) {
+        line[i * 2] = HEX_MAP[(data[i] >> 4) & 0x0F];
+        line[i * 2 + 1] = HEX_MAP[data[i] & 0x0F];
+    }
+    line[len * 2] = '\0';
+    Serial.printf("SAVE_EXPORT_DATA %s\n", line);
+}
+
+static bool parseSlotArg(const char* arg, uint8_t* slotOut) {
+    while (*arg == ' ') arg++;
+    char* end = nullptr;
+    long v = strtol(arg, &end, 10);
+    if (end == arg || *end != '\0' || v < 0 || v >= (long)SAVE_SLOT_COUNT) return false;
+    *slotOut = (uint8_t)v;
+    return true;
+}
 
 // ============================================================================
 //  UICallbacks implementation (updates DisplayManager)
@@ -257,6 +367,8 @@ static UICallbacks gameCallbacks = {
             Serial.println("[Offline] No compensation needed (no save time or time went backwards).");
         }
 
+        finalizeImportAlignedSaveIfNeeded(timestamp);
+
         if (reinitPetAfterInitialTimeConfirm) {
             pet.initNew(timeManager.now());
             gallerySystem.unlockForm(pet.form);
@@ -345,6 +457,85 @@ void printStatus() {
     const char* wN[] = {"Breakfast", "Lunch", "Dinner"};
     if (wIdx >= 0) Serial.printf("  Window:     %s\n", wN[wIdx]);
     else Serial.println("  Window:     None");
+    Serial.printf("  Gallery:    %d / %d unlocked\n",
+                  gallerySystem.getData().getUnlockedCount(), FORM_COUNT);
+    Serial.println("========================================");
+}
+
+static void printStatusForSnapshot(const PetState& p, uint32_t epochNow) {
+    TimeInfo ti = timeManager.epochToTimeInfo(epochNow);
+    char timeBuf[24];
+    snprintf(timeBuf, sizeof(timeBuf), "%04d-%02d-%02d %02d:%02d:%02d",
+             ti.year, ti.month, ti.day, ti.hour, ti.minute, ti.second);
+
+    Serial.println("========================================");
+    if (p.is_nobu) {
+        Serial.printf("  Time:       %s\n", timeBuf);
+        Serial.println("  Name:       nobu");
+        Serial.println("  HP:         ?");
+        Serial.println("  SR:         ?");
+        Serial.println("  Age:        ?");
+        Serial.println("  Stage:      ?");
+        Serial.println("  Align:      ?");
+        Serial.println("========================================");
+        return;
+    }
+
+    Serial.printf("  Time:       %s\n", timeBuf);
+    Serial.printf("  Form:       %s\n", FORM_NAMES[p.form]);
+    Serial.printf("  Base:       %s\n", FORM_NAMES[p.base_form]);
+    Serial.printf("  Stage:      %s\n", STAGE_NAMES[p.stage]);
+    Serial.printf("  Alignment:  %s\n", ALIGNMENT_NAMES[p.alignment]);
+    Serial.printf("  Health:     %d / %d\n", p.health, HEALTH_MAX);
+    Serial.printf("  Seriousness:%d / %d\n", p.seriousness, SERIOUSNESS_MAX);
+    SeriousnessTier tier = seriousnessSystem.getCurrentTier(p);
+    Serial.printf("  Tier:       %s\n", TIER_NAMES[tier]);
+    Serial.printf("  Age:        Day %d", p.age_days + 1);
+    if (p.stage == STAGE_CHILD)
+        Serial.printf(" / %d (child)\n", CHILD_PERIOD_DAYS);
+    else
+        Serial.println(" (adult)");
+    Serial.printf("  Rounds:     %d\n", p.rounds);
+    Serial.printf("  Fed today:  %d / %d\n", p.daily_feed.feed_count, DAILY_FEED_LIMIT);
+    if (p.last_poke_effect_time == 0) {
+        Serial.println("  Poke:       available");
+    } else {
+        uint32_t elapsed = epochNow - p.last_poke_effect_time;
+        if (elapsed >= POKE_COOLDOWN_SEC)
+            Serial.println("  Poke:       available");
+        else
+            Serial.printf("  Poke:       cooldown %lus left\n", POKE_COOLDOWN_SEC - elapsed);
+    }
+    if (p.idle_paused_until > epochNow)
+        Serial.printf("  Idle pause: %lus left\n", p.idle_paused_until - epochNow);
+    if (p.mapo_tofu_count > 0)
+        Serial.printf("  Mapo Tofu:  %d / %d\n", p.mapo_tofu_count, MAPO_TOFU_CURSE_THRESHOLD);
+    if (p.is_rhongomyniad)
+        Serial.println("  *** RHONGOMYNIAD ***");
+    if (p.is_black_rhongomyniad)
+        Serial.println("  *** BLACK RHONGOMYNIAD (Mapo Curse) ***");
+    if (p.white_fun_form_locked && p.alignment == ALIGN_WHITE)
+        Serial.printf("  Fun form:   %s (locked)\n", FORM_NAMES[p.white_fun_form]);
+    RhongoTimerState rS = seriousnessSystem.getRhongoState(p, epochNow);
+    if (rS == RHONGO_COUNTING) {
+        uint32_t rem = seriousnessSystem.getRhongoRemaining(p, epochNow);
+        Serial.printf("  Rhongo:     %luh left\n", rem / 3600);
+    } else if (rS == RHONGO_TRIGGERED) {
+        Serial.println("  Rhongo:     TRIGGERED");
+    }
+    uint32_t wait = feedingSystem.secondsUntilNextFeed(p, epochNow);
+    if (p.daily_feed.feed_count >= DAILY_FEED_LIMIT)
+        Serial.println("  Next feed:  LOCKED");
+    else if (wait > 0)
+        Serial.printf("  Next feed:  wait %lum\n", wait / 60);
+    else
+        Serial.println("  Next feed:  READY");
+    int8_t wIdx = feedingSystem.getWindowIndex(ti.hour);
+    const char* wN[] = {"Breakfast", "Lunch", "Dinner"};
+    if (wIdx >= 0) Serial.printf("  Window:     %s\n", wN[wIdx]);
+    else Serial.println("  Window:     None");
+    Serial.printf("  Gallery:    %d / %d unlocked\n",
+                  gallerySystem.getData().getUnlockedCount(), FORM_COUNT);
     Serial.println("========================================");
 }
 
@@ -355,6 +546,13 @@ void printHelp() {
     Serial.println("  t <min>        Advance N minutes");
     Serial.println("  d              Advance 1 day");
     Serial.println("  save / load / erase");
+    Serial.println("  s0 / s1 / s2  Show per-slot snapshot status");
+    Serial.println("  IMPORT_TIME_SETUP  After serial import: force time UI, no offline settle");
+    Serial.println("  SAVE_SLOT_STATUS");
+    Serial.println("  SAVE_EXPORT <slot>");
+    Serial.println("  SAVE_IMPORT_BEGIN <slot>");
+    Serial.println("  SAVE_IMPORT_DATA <hex>");
+    Serial.println("  SAVE_IMPORT_COMMIT / SAVE_IMPORT_ABORT");
     Serial.println("  reset          Destroy & reset");
     Serial.println("  stime Y M D H m");
     Serial.println("  SET_TIME <epoch>  Set system time (unix timestamp)");
@@ -585,6 +783,189 @@ void processCommand(const char* cmd) {
     while (*cmd == ' ') cmd++;
     if (strlen(cmd) == 0) return;
 
+    if (strcmp(cmd, "SAVE_SLOT_STATUS") == 0) {
+        for (uint8_t slot = 0; slot < SAVE_SLOT_COUNT; slot++) {
+            SaveHeader hdr;
+            SaveResult st = SAVE_OK;
+            if (saveManager.getSlotStatus(slot, hdr, st)) {
+                Serial.printf("slot%u:seq=%lu,time=%lu,ver=%u,size=%u,crc=0x%04X\n",
+                              slot,
+                              (unsigned long)hdr.sequence,
+                              (unsigned long)hdr.save_time,
+                              (unsigned)hdr.version,
+                              (unsigned)hdr.data_size,
+                              (unsigned)hdr.checksum);
+            } else {
+                Serial.printf("slot%u:ERR(%d)\n", slot, (int)st);
+            }
+        }
+        return;
+    }
+
+    if (strncmp(cmd, "SAVE_EXPORT ", 12) == 0) {
+        uint8_t slot = 0;
+        if (!parseSlotArg(cmd + 12, &slot)) {
+            Serial.println("[SaveExport] Usage: SAVE_EXPORT <slot(0|1|2)>");
+            return;
+        }
+        SaveHeader hdr;
+        PetState state;
+        GalleryData g;
+        bool galleryBound = false;
+        SaveResult r = saveManager.exportSlotRawWithGallery(slot, hdr, state, g, galleryBound);
+        if (r != SAVE_OK) {
+            Serial.printf("[SaveExport] FAILED (%d)\n", (int)r);
+            return;
+        }
+        uint8_t raw[SLOT_RAW_WITH_GALLERY_BYTES];
+        if (!galleryBound) {
+            Serial.println("[SaveExport] WARN: slot gallery snapshot missing, exporting minimal consistent gallery.");
+        }
+        memcpy(raw, &hdr, sizeof(SaveHeader));
+        memcpy(raw + sizeof(SaveHeader), &state, sizeof(PetState));
+        memcpy(raw + SLOT_RAW_BASE_BYTES, &g, sizeof(GalleryData));
+        Serial.printf("SAVE_EXPORT_BEGIN slot=%u bytes=%u\n", slot, (unsigned)SLOT_RAW_WITH_GALLERY_BYTES);
+        for (size_t off = 0; off < SLOT_RAW_WITH_GALLERY_BYTES; off += EXPORT_LINE_BYTES) {
+            size_t take = SLOT_RAW_WITH_GALLERY_BYTES - off;
+            if (take > EXPORT_LINE_BYTES) take = EXPORT_LINE_BYTES;
+            printHexLine(raw + off, take);
+        }
+        Serial.printf("SAVE_EXPORT_END slot=%u bytes=%u\n", slot, (unsigned)SLOT_RAW_WITH_GALLERY_BYTES);
+        return;
+    }
+
+    if (strncmp(cmd, "SAVE_IMPORT_BEGIN ", 18) == 0) {
+        uint8_t slot = 0;
+        if (!parseSlotArg(cmd + 18, &slot)) {
+            Serial.println("[SaveImport] Usage: SAVE_IMPORT_BEGIN <slot(0|1|2)>");
+            return;
+        }
+        // 新导入会话开始时清理历史对齐重试状态，避免旧任务串扰
+        _importAlignRetryPending = false;
+        _importAlignEpochPending = 0;
+        _importAlignLastRetryMs = 0;
+        _importAlignLastLogMs = 0;
+        g_slotImport.active = true;
+        g_slotImport.slot = slot;
+        g_slotImport.received = 0;
+        g_slotImport.invalidCount = 0;
+        memset(g_slotImport.raw, 0, sizeof(g_slotImport.raw));
+        Serial.printf("[SaveImport] READY slot=%u target_bytes=%u (legacy=%u)\n",
+                      slot, (unsigned)SLOT_RAW_WITH_GALLERY_BYTES, (unsigned)SLOT_RAW_BASE_BYTES);
+        return;
+    }
+
+    if (strncmp(cmd, "SAVE_IMPORT_DATA ", 17) == 0) {
+        if (!g_slotImport.active) {
+            Serial.println("[SaveImport] No active session. Use SAVE_IMPORT_BEGIN first.");
+            return;
+        }
+        const char* hex = cmd + 17;
+        size_t cap = SLOT_RAW_MAX_BYTES - g_slotImport.received;
+        size_t wrote = 0;
+        if (!decodeHexToBytes(hex, g_slotImport.raw + g_slotImport.received, cap, &wrote)) {
+            Serial.println("[SaveImport] Invalid hex payload or overflow.");
+            if (++g_slotImport.invalidCount >= SAVE_IMPORT_INVALID_MAX) {
+                g_slotImport.active = false;
+                g_slotImport.received = 0;
+                g_slotImport.invalidCount = 0;
+                Serial.println("[SaveImport] ABORTED: too many invalid payloads");
+            }
+            return;
+        }
+        g_slotImport.invalidCount = 0;
+        g_slotImport.received += wrote;
+        Serial.printf("[SaveImport] RECV %u/%u\n", (unsigned)g_slotImport.received, (unsigned)SLOT_RAW_WITH_GALLERY_BYTES);
+        return;
+    }
+
+    if (strcmp(cmd, "SAVE_IMPORT_ABORT") == 0) {
+        g_slotImport.active = false;
+        g_slotImport.received = 0;
+        g_slotImport.invalidCount = 0;
+        Serial.println("[SaveImport] ABORTED");
+        return;
+    }
+
+    if (strcmp(cmd, "SAVE_IMPORT_COMMIT") == 0) {
+        if (!g_slotImport.active) {
+            Serial.println("[SaveImport] No active session.");
+            return;
+        }
+        if (g_slotImport.received != SLOT_RAW_BASE_BYTES &&
+            g_slotImport.received != SLOT_RAW_WITH_GALLERY_BYTES) {
+            Serial.printf("[SaveImport] Incomplete payload: %u (expect %u or %u)\n",
+                          (unsigned)g_slotImport.received,
+                          (unsigned)SLOT_RAW_BASE_BYTES,
+                          (unsigned)SLOT_RAW_WITH_GALLERY_BYTES);
+            return;
+        }
+
+        SaveHeader hdr;
+        PetState state;
+        memcpy(&hdr, g_slotImport.raw, sizeof(SaveHeader));
+        memcpy(&state, g_slotImport.raw + sizeof(SaveHeader), sizeof(PetState));
+
+        SaveResult ir = saveManager.importSlotRaw(g_slotImport.slot, hdr, state, true);
+        if (ir != SAVE_OK) {
+            Serial.printf("[SaveImport] FAILED (%d)\n", (int)ir);
+            g_slotImport.active = false;
+            g_slotImport.received = 0;
+            g_slotImport.invalidCount = 0;
+            return;
+        }
+
+        if (g_slotImport.received == SLOT_RAW_WITH_GALLERY_BYTES) {
+            GalleryData g;
+            memcpy(&g, g_slotImport.raw + SLOT_RAW_BASE_BYTES, sizeof(GalleryData));
+            SaveResult gsr = saveManager.saveGallery(g);
+            if (gsr != SAVE_OK) {
+                Serial.printf("[SaveImport] WARN: gallery import failed (%d)\n", (int)gsr);
+            } else {
+                // 立即把导入图鉴绑定到该槽，避免“刚导入即导出”时读不到槽位图鉴快照
+                saveManager.syncGlobalGalleryToSlot(g_slotImport.slot);
+                gallerySystem.getData() = g;
+                Serial.println("[SaveImport] Gallery imported");
+            }
+        } else {
+            Serial.println("[SaveImport] Legacy payload detected (no gallery block)");
+            // legacy 导入：保留原有图鉴进度，同时确保“当前导入形态”已解锁
+            bool unlocked = gallerySystem.unlockForm(state.form);
+            SaveResult gsr = saveManager.saveGallery(gallerySystem.getData());
+            if (gsr != SAVE_OK) {
+                Serial.printf("[SaveImport] WARN: legacy gallery save failed (%d)\n", (int)gsr);
+            } else {
+                saveManager.syncGlobalGalleryToSlot(g_slotImport.slot);
+                if (unlocked) {
+                    const char* formName =
+                        (state.form < FORM_COUNT) ? FORM_NAMES[state.form] : "UNKNOWN_FORM";
+                    Serial.printf("[SaveImport] Legacy gallery kept; unlocked current form: %s\n",
+                                  formName);
+                } else {
+                    Serial.println("[SaveImport] Legacy gallery kept; current form already unlocked.");
+                }
+            }
+        }
+
+        // 通用导入规则：导入槽必活跃；其余两槽中更旧者活跃；剩余一槽冻结保留
+        saveManager.setActivePairForImportedBaseSlot(g_slotImport.slot);
+
+        SaveResult lr = saveManager.loadFromSlot(g_slotImport.slot, pet);
+        if (lr != SAVE_OK) {
+            Serial.printf("[SaveImport] FAILED: loadFromSlot failed (%d)\n", (int)lr);
+            g_slotImport.active = false;
+            g_slotImport.received = 0;
+            g_slotImport.invalidCount = 0;
+            return;
+        }
+        beginInitialTimeSetupAfterImportedSave();
+        Serial.printf("[SaveImport] OK slot=%u; now requiring time setup.\n", g_slotImport.slot);
+        g_slotImport.active = false;
+        g_slotImport.received = 0;
+        g_slotImport.invalidCount = 0;
+        return;
+    }
+
     // SET_TIME 命令: 设置系统时间 (离线补偿用, 任何状态下可用)
     if (strncmp(cmd, "SET_TIME ", 9) == 0) {
         uint32_t timestamp = strtoul(cmd + 9, nullptr, 10);
@@ -610,6 +991,7 @@ void processCommand(const char* cmd) {
                 timeManager.setSimulatedTime(t.year, t.month, t.day, t.hour, t.minute);
                 Serial.println("[Offline] No compensation needed (no save time or time went backwards).");
             }
+            finalizeImportAlignedSaveIfNeeded(timestamp);
             if (reinitPetAfterInitialTimeConfirm) {
                 pet.initNew(timeManager.now());
                 gallerySystem.unlockForm(pet.form);
@@ -630,13 +1012,49 @@ void processCommand(const char* cmd) {
     // 等待时间设置期间, 只允许时间设置相关和 s/h 命令
     if (waitingForTimeSet) {
         if (strcmp(cmd, "s") == 0) { printStatus(); return; }
+        if (strcmp(cmd, "s0") == 0 || strcmp(cmd, "s1") == 0 || strcmp(cmd, "s2") == 0) {
+            uint8_t slot = (uint8_t)(cmd[1] - '0');
+            SaveHeader hdr;
+            PetState snap;
+            SaveResult sr = saveManager.exportSlotRaw(slot, hdr, snap);
+            if (sr != SAVE_OK) {
+                Serial.printf("[SlotStatus] slot%u unavailable (err=%d)\n", slot, (int)sr);
+                return;
+            }
+            Serial.printf("[SlotStatus] slot%u seq=%lu save_time=%lu\n",
+                          slot, (unsigned long)hdr.sequence, (unsigned long)hdr.save_time);
+            printStatusForSnapshot(snap, hdr.save_time);
+            return;
+        }
         if (strcmp(cmd, "h") == 0) { printHelp(); return; }
         Serial.println("[Main] Waiting for date/time setup. Other commands blocked.");
         return;
     }
 
     if (strcmp(cmd, "s") == 0) { printStatus(); return; }
+    if (strcmp(cmd, "s0") == 0 || strcmp(cmd, "s1") == 0 || strcmp(cmd, "s2") == 0) {
+        uint8_t slot = (uint8_t)(cmd[1] - '0');
+        SaveHeader hdr;
+        PetState snap;
+        SaveResult sr = saveManager.exportSlotRaw(slot, hdr, snap);
+        if (sr != SAVE_OK) {
+            Serial.printf("[SlotStatus] slot%u unavailable (err=%d)\n", slot, (int)sr);
+            return;
+        }
+        Serial.printf("[SlotStatus] slot%u seq=%lu save_time=%lu\n",
+                      slot, (unsigned long)hdr.sequence, (unsigned long)hdr.save_time);
+        printStatusForSnapshot(snap, hdr.save_time);
+        return;
+    }
     if (strcmp(cmd, "h") == 0) { printHelp(); return; }
+    if (strcmp(cmd, "IMPORT_TIME_SETUP") == 0) {
+        if (waitingForTimeSet) {
+            Serial.println("[ImportClock] Already in time setup wait.");
+            return;
+        }
+        beginInitialTimeSetupAfterImportedSave();
+        return;
+    }
     if (strcmp(cmd, "fl") == 0) {
         Serial.println("--- Normal Food ---");
         for (uint8_t i = 0; i < FOOD_COUNT; i++)
@@ -1018,6 +1436,15 @@ void setup() {
             saveManager.loadGallery(gallerySystem.getData());
             // 确保当前形态已解锁
             gallerySystem.unlockForm(pet.form);
+
+            // 若上次是“导入后待设时”状态，重启后仍强制要求设时（避免串口开关导致状态丢失）
+            if (saveManager.isImportTimeSetupRequired()) {
+                waitingForTimeSet = true;
+                loadedSaveTime = 0;
+                reinitPetAfterInitialTimeConfirm = false;
+                _importFreshClockPersistPending = true;
+                Serial.println("[ImportClock] Pending import-time setup recovered from NVS.");
+            }
         } else {
             Serial.println("[Main] Save corrupted, new game");
             DisplayManager::showSaveCorruptedNewGame();
@@ -1226,6 +1653,32 @@ void loop() {
             if (ms - lastAutoSaveFailLogMs >= 3000) {
                 lastAutoSaveFailLogMs = ms;
                 Serial.printf("[Save] WARN: auto-save failed (%d)\n", (int)r);
+            }
+        }
+    }
+
+    // Import-time align background retry: 玩家无需再次设时，后台直到写入+校验成功
+    if (_importAlignRetryPending) {
+        uint32_t ms = millis();
+        if (ms - _importAlignLastRetryMs >= IMPORT_ALIGN_RETRY_INTERVAL_MS) {
+            _importAlignLastRetryMs = ms;
+            SaveResult rr = saveManager.save(pet, _importAlignEpochPending);
+            bool ok = (rr == SAVE_OK) && saveManager.verifyLatestSave(_importAlignEpochPending, pet);
+            if (ok) {
+                saveManager.markSaved(_importAlignEpochPending);
+                (void)saveManager.saveGallery(gallerySystem.getData());
+                saveManager.setImportTimeSetupRequired(false);
+                loadedSaveTime = _importAlignEpochPending;
+                _importAlignRetryPending = false;
+                _importAlignEpochPending = 0;
+                Serial.println("[ImportClock] Background align retry success.");
+            } else if (ms - _importAlignLastLogMs >= 10000) {
+                _importAlignLastLogMs = ms;
+                if (rr != SAVE_OK) {
+                    Serial.printf("[ImportClock] Background retry save failed (%d)\n", (int)rr);
+                } else {
+                    Serial.println("[ImportClock] Background retry verify failed");
+                }
             }
         }
     }
