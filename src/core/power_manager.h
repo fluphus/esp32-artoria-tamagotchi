@@ -59,6 +59,11 @@ public:
     bool shouldEnterDeepSleep() const { return _shouldSleep; }
     void clearSleepFlag() { _shouldSleep = false; }
 
+    // deep sleep 失败后定时重试 (方案 B: 不阻塞 loop, 用户活动会取消)
+    void scheduleDeepSleepRetry(uint32_t nowMs, uint32_t delayMs = 500);
+    void cancelDeepSleepRetry();
+    bool isDeepSleepRetryDue(uint32_t nowMs) const;
+
     // 从 deep sleep 唤醒后调用
     void onWakeFromSleep();
 
@@ -81,6 +86,7 @@ private:
     uint32_t _dimEnteredMs = 0;         // 进入 dim 状态的时间
     bool _shouldSleep = false;
     bool _screenIsOff = false;
+    uint32_t _nextDeepSleepTryMs = 0;   // 0 = 无挂起重试
 
     // 硬件控制
     void applyBrightness(uint8_t level);

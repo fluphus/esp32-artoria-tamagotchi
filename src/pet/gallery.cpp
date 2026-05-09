@@ -95,6 +95,7 @@ uint8_t GallerySystem::getPageForms(uint8_t page, Form* outForms, uint8_t maxCou
 }
 
 uint8_t GallerySystem::getItemCountOnPage(uint8_t page) const {
+    if (page >= GALLERY_TOTAL_PAGES) return 0;
     uint8_t startIdx = page * GALLERY_ITEMS_PER_PAGE;
     uint8_t remaining = TOTAL_GALLERY_FORMS - startIdx;
     return (remaining < GALLERY_ITEMS_PER_PAGE) ? remaining : GALLERY_ITEMS_PER_PAGE;

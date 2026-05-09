@@ -192,6 +192,9 @@ private:
     static EvolutionResult  _pendingEvolution;
     static int16_t          _pendingEvolutionSrAfter;
 
+    // Idle 页时钟：按模拟时间分钟推进刷新（不依赖 PetState 每帧变化）
+    static uint32_t         _lastIdleClockEpochMin;
+
     // 内部: 标记脏
     static void markDirty();
 

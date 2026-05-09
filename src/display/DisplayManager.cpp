@@ -35,6 +35,7 @@ bool         DisplayManager::_pendingWaitTimeSet = false;
 bool             DisplayManager::_pendingEvolutionActive   = false;
 EvolutionResult  DisplayManager::_pendingEvolution         = {};
 int16_t          DisplayManager::_pendingEvolutionSrAfter  = 0;
+uint32_t         DisplayManager::_lastIdleClockEpochMin    = UINT32_MAX;
 
 // ============================================================================
 //  生命周期
@@ -53,6 +54,7 @@ void DisplayManager::init() {
     _contextAfterHold = UI_IDLE;
     _pendingWaitTimeSet = false;
     _pendingEvolutionActive = false;
+    _lastIdleClockEpochMin = UINT32_MAX;
 
     DisplayRenderer::init();
     markDirty();
@@ -299,15 +301,22 @@ void DisplayManager::holdPageThen(uint32_t durationMs, DisplayPage nextPage, UIC
 
 void DisplayManager::updatePetSnapshot(const PetState& pet) {
     bool changed = memcmp(&_model.petSnapshot, &pet, sizeof(PetState)) != 0;
+    uint32_t epochMin = timeManager.now() / 60;
     if (changed) {
         _model.petSnapshot = pet;
         // 更新时间/日期字符串
         timeManager.getFormattedTime(_model.timeStr, sizeof(_model.timeStr));
         timeManager.getFormattedDate(_model.dateStr, sizeof(_model.dateStr));
         _model.ageDay = pet.age_days + 1;
+        _lastIdleClockEpochMin = epochMin;
         if (_currentPage == PAGE_IDLE) {
             markDirty();
         }
+    } else if (_currentPage == PAGE_IDLE && epochMin != _lastIdleClockEpochMin) {
+        _lastIdleClockEpochMin = epochMin;
+        timeManager.getFormattedTime(_model.timeStr, sizeof(_model.timeStr));
+        timeManager.getFormattedDate(_model.dateStr, sizeof(_model.dateStr));
+        markDirty();
     }
 }
 

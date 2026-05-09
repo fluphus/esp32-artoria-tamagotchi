@@ -25,6 +25,7 @@ void PowerManager::init() {
     _state = POWER_ACTIVE;
     _shouldSleep = false;
     _screenIsOff = false;
+    _nextDeepSleepTryMs = 0;
     loadConfig();
     applyBrightness(_brightness);
     Serial.printf("[Power] Init: brightness=%d, dim=%d, dimTimeout=%lus, offTimeout=%lus\n",
@@ -69,6 +70,8 @@ void PowerManager::update(uint32_t nowMs) {
 void PowerManager::onUserActivity() {
     uint32_t nowMs = millis();
     _lastActivityMs = nowMs;
+    _shouldSleep = false;
+    cancelDeepSleepRetry();
 
     if (_state != POWER_ACTIVE) {
         PowerState prevState = _state;
@@ -116,6 +119,7 @@ void PowerManager::onWakeFromSleep() {
     _state = POWER_ACTIVE;
     _lastActivityMs = millis();
     _shouldSleep = false;
+    _nextDeepSleepTryMs = 0;
     displayWake();
     applyBrightness(_brightness);
     Serial.println("[Power] Woke from deep sleep");
@@ -179,4 +183,17 @@ void PowerManager::displayWake() {
 #if DISPLAY_BACKEND_SERIAL_PLACEHOLDER
     Serial.println("[Power] Display ON");
 #endif
+}
+
+void PowerManager::scheduleDeepSleepRetry(uint32_t nowMs, uint32_t delayMs) {
+    _nextDeepSleepTryMs = nowMs + delayMs;
+}
+
+void PowerManager::cancelDeepSleepRetry() {
+    _nextDeepSleepTryMs = 0;
+}
+
+bool PowerManager::isDeepSleepRetryDue(uint32_t nowMs) const {
+    if (_nextDeepSleepTryMs == 0) return false;
+    return (int32_t)(nowMs - _nextDeepSleepTryMs) >= 0;
 }

@@ -86,7 +86,7 @@ void MenuController::onAnimationComplete(UIContext animContext) {
             // 同步首帧 cursor：showFeedDraw() 会将 DisplayModel.feedCursor 重置为 0，
             // 若不在切到 PAGE_FEED_PICK 时补一次刷新，则 UI 首帧会显示错误的指针位置，
             // 直到用户按键触发 onFeedCursorMove 才会对齐。
-            safeCallback(_callbacks->onFeedCursorMove, _feed.cursor, _feed.selected);
+            safeCallback(&UICallbacks::onFeedCursorMove, _feed.cursor, _feed.selected);
             break;
         case UI_POKE_ANIM:
             // 戳一下动画完成, 回到主界面
@@ -98,7 +98,7 @@ void MenuController::onAnimationComplete(UIContext animContext) {
             // switchContext 会因为 oldCtx == newCtx 而跳过, 导致 PAGE_EVOLUTION 不被清除.
             // 因此需要强制通知 UI 切换页面.
             if (inputManager.getContext() == UI_IDLE) {
-                safeCallback(_callbacks->onContextChange, UI_EVOLUTION, UI_IDLE);
+                safeCallback(&UICallbacks::onContextChange, UI_EVOLUTION, UI_IDLE);
             } else {
                 switchContext(UI_IDLE);
             }
@@ -107,7 +107,7 @@ void MenuController::onAnimationComplete(UIContext animContext) {
             // combo 动画完成, 进入特殊食物选择
             if (_combo_pending) {
                 switchContext(UI_SPECIAL_FOOD);
-                safeCallback(_callbacks->onSpecialFoodShow, _sfood_count);
+                safeCallback(&UICallbacks::onSpecialFoodShow, _sfood_count);
             }
             break;
         default:
@@ -119,7 +119,7 @@ void MenuController::switchContext(UIContext newCtx) {
     UIContext oldCtx = inputManager.getContext();
     if (oldCtx == newCtx) return;
     inputManager.setContext(newCtx);
-    safeCallback(_callbacks->onContextChange, oldCtx, newCtx);
+    safeCallback(&UICallbacks::onContextChange, oldCtx, newCtx);
 }
 
 void MenuController::handleAction(GameInput action) {
@@ -177,7 +177,7 @@ void MenuController::handleIdle(GameInput action) {
             break;
         case INPUT_STATUS_VIEW:
             switchContext(UI_STATUS);
-            safeCallback(_callbacks->onStatusOpen, *_pet);
+            safeCallback(&UICallbacks::onStatusOpen, *_pet);
             break;
         case INPUT_POKE:
             doPoke();
@@ -204,12 +204,12 @@ void MenuController::handleStatus(GameInput action) {
         case INPUT_STATUS_VIEW:
             // 再次按下则关闭状态界面
             switchContext(UI_IDLE);
-            safeCallback(_callbacks->onStatusClose);
+            safeCallback(&UICallbacks::onStatusClose);
             break;
         case INPUT_GALLERY_OPEN:
             // 长按中键: 从状态面板直接进入图鉴
             // (处理长按时PRESS已先触发打开了状态面板的情况)
-            safeCallback(_callbacks->onStatusClose);
+            safeCallback(&UICallbacks::onStatusClose);
             gallerySystem.open();
             switchContext(UI_GALLERY);
             DisplayManager::switchPage(PAGE_GALLERY);
@@ -234,7 +234,7 @@ void MenuController::handleFeedPick(GameInput action) {
             } else {
                 _feed.cursor = FEED_DRAW_COUNT - 1;  // 循环
             }
-            safeCallback(_callbacks->onFeedCursorMove, _feed.cursor, _feed.selected);
+            safeCallback(&UICallbacks::onFeedCursorMove, _feed.cursor, _feed.selected);
             break;
 
         case INPUT_FOOD_SLOT_NEXT:
@@ -243,7 +243,7 @@ void MenuController::handleFeedPick(GameInput action) {
             } else {
                 _feed.cursor = 0;  // 循环
             }
-            safeCallback(_callbacks->onFeedCursorMove, _feed.cursor, _feed.selected);
+            safeCallback(&UICallbacks::onFeedCursorMove, _feed.cursor, _feed.selected);
             break;
 
         case INPUT_FEED_PICK_TOGGLE:
@@ -271,7 +271,7 @@ void MenuController::handleSpecialFood(GameInput action) {
             } else {
                 _sfood_cursor = _sfood_count - 1;
             }
-            safeCallback(_callbacks->onSpecialFoodCursor, _sfood_cursor);
+            safeCallback(&UICallbacks::onSpecialFoodCursor, _sfood_cursor);
             break;
 
         case INPUT_SFOOD_NEXT:
@@ -280,7 +280,7 @@ void MenuController::handleSpecialFood(GameInput action) {
             } else {
                 _sfood_cursor = 0;
             }
-            safeCallback(_callbacks->onSpecialFoodCursor, _sfood_cursor);
+            safeCallback(&UICallbacks::onSpecialFoodCursor, _sfood_cursor);
             break;
 
         case INPUT_SPECIAL_FOOD_SELECT:
@@ -289,20 +289,20 @@ void MenuController::handleSpecialFood(GameInput action) {
                 _combo_pending = false;
 
                 // 通知 UI 显示特殊食物确认 (触发 ANIM_MAPO_TOFU 动画)
-                safeCallback(_callbacks->onSpecialFoodSelect, _sfood_cursor, _last_feed_outcome);
+                safeCallback(&UICallbacks::onSpecialFoodSelect, _sfood_cursor, _last_feed_outcome);
 
                 // nobu 路线: 如果触发了麻婆豆腐为 Oda Nobunaga
                 if (_pet->is_nobu && _last_feed_outcome.mapo_tofu_triggered) {
                     EvolutionResult eR = evolutionSystem.checkNobuMapo(*_pet);
                     if (eR.event != EVO_NONE) {
-                        safeCallback(_callbacks->onEvolution, eR, _pet->seriousness);
+                        safeCallback(&UICallbacks::onEvolution, eR, _pet->seriousness);
                     }
                 }
                 // 普通路线: 如果触发了麻婆诅咒, 在 mapo 动画之后检查进化
                 else if (_last_feed_outcome.mapo_tofu_curse_activated) {
                     EvolutionResult eR = evolutionSystem.checkMapoCurse(*_pet);
                     if (eR.event != EVO_NONE) {
-                        safeCallback(_callbacks->onEvolution, eR, _pet->seriousness);
+                        safeCallback(&UICallbacks::onEvolution, eR, _pet->seriousness);
                     }
                 }
 
@@ -326,14 +326,14 @@ void MenuController::handleDestroyConfirm(GameInput action) {
         case INPUT_NAV_LEFT:
             if (_destroy.cursor > 0) {
                 _destroy.cursor--;
-                safeCallback(_callbacks->onDestroyCursorMove, _destroy.cursor);
+                safeCallback(&UICallbacks::onDestroyCursorMove, _destroy.cursor);
             }
             break;
 
         case INPUT_NAV_RIGHT:
             if (_destroy.cursor < 1) {
                 _destroy.cursor++;
-                safeCallback(_callbacks->onDestroyCursorMove, _destroy.cursor);
+                safeCallback(&UICallbacks::onDestroyCursorMove, _destroy.cursor);
             }
             break;
 
@@ -374,7 +374,7 @@ void MenuController::startFeed() {
     // 切换到食物绘制显示界面 (触发动画)
     // 动画完成后 DisplayManager 调用 onAnimationComplete(UI_FEED_DRAW)
     switchContext(UI_FEED_DRAW);
-    safeCallback(_callbacks->onFeedDrawStart, _feed.draw);
+    safeCallback(&UICallbacks::onFeedDrawStart, _feed.draw);
 }
 
 void MenuController::toggleFoodSlot() {
@@ -385,7 +385,7 @@ void MenuController::toggleFoodSlot() {
         // 取消选取
         _feed.selected[slot] = false;
         _feed.selected_count--;
-        safeCallback(_callbacks->onFeedSlotToggle, slot, false);
+        safeCallback(&UICallbacks::onFeedSlotToggle, slot, false);
     } else {
         // 选取
         if (_feed.selected_count >= FEED_PICK_COUNT) {
@@ -394,7 +394,7 @@ void MenuController::toggleFoodSlot() {
         }
         _feed.selected[slot] = true;
         _feed.selected_count++;
-        safeCallback(_callbacks->onFeedSlotToggle, slot, true);
+        safeCallback(&UICallbacks::onFeedSlotToggle, slot, true);
 
         // 选满3个则自动提交
         if (_feed.selected_count >= FEED_PICK_COUNT) {
@@ -434,7 +434,7 @@ void MenuController::confirmFeed() {
     EvolutionResult eR = evolutionSystem.check(*_pet, now);
 
     // 通知UI: 投喂完成 seriousness
-    safeCallback(_callbacks->onFeedConfirm, outcome, _pet->seriousness);
+    safeCallback(&UICallbacks::onFeedConfirm, outcome, _pet->seriousness);
 
     // 处理组合
     if (outcome.combo_triggered) {
@@ -453,7 +453,7 @@ void MenuController::confirmFeed() {
 
     // 处理进化
     if (eR.event != EVO_NONE) {
-        safeCallback(_callbacks->onEvolution, eR, _pet->seriousness);
+        safeCallback(&UICallbacks::onEvolution, eR, _pet->seriousness);
     }
 
     // 保存
@@ -466,7 +466,7 @@ void MenuController::cancelFeed() {
     _feed.selected_count = 0;
     for (uint8_t i = 0; i < 4; i++) _feed.selected[i] = false;
     switchContext(UI_IDLE);
-    safeCallback(_callbacks->onFeedCancel);
+    safeCallback(&UICallbacks::onFeedCancel);
 }
 
 void MenuController::doPoke() {
@@ -478,7 +478,7 @@ void MenuController::doPoke() {
     // 切换到戳一下动画
     // 动画完成后 DisplayManager 调用 onAnimationComplete(UI_POKE_ANIM)
     switchContext(UI_POKE_ANIM);
-    safeCallback(_callbacks->onPokeStart);
+    safeCallback(&UICallbacks::onPokeStart);
 
     // 执行戳一下逻辑
     InteractResult sR = seriousnessSystem.onInteract(*_pet, INTERACT_POKE, now);
@@ -487,10 +487,10 @@ void MenuController::doPoke() {
     // 检查进化
     EvolutionResult eR = evolutionSystem.check(*_pet, now);
 
-    safeCallback(_callbacks->onPokeResult, valueChanged, sR.seriousness_before, sR.seriousness_after);
+    safeCallback(&UICallbacks::onPokeResult, valueChanged, sR.seriousness_before, sR.seriousness_after);
 
     if (eR.event != EVO_NONE) {
-        safeCallback(_callbacks->onEvolution, eR, _pet->seriousness);
+        safeCallback(&UICallbacks::onEvolution, eR, _pet->seriousness);
     }
 
     // 关键：poke 会更新冷却与待机暂停时间戳，需立即持久化以避免断电后离线补偿失真
@@ -506,7 +506,7 @@ void MenuController::enterDestroyConfirm() {
     _destroy.active = true;
     _destroy.cursor = 1;  // 默认选择 "no" (安全)
     switchContext(UI_DESTROY_CONFIRM);
-    safeCallback(_callbacks->onDestroyConfirmShow, _destroy.cursor);
+    safeCallback(&UICallbacks::onDestroyConfirmShow, _destroy.cursor);
 }
 
 void MenuController::executeDestroy() {
@@ -561,13 +561,13 @@ void MenuController::executeDestroy() {
     saveManager.save(*_pet, timeManager.now());
     saveManager.markSaved(now);
 
-    safeCallback(_callbacks->onDestroyExecuted, destroyedForm);
+    safeCallback(&UICallbacks::onDestroyExecuted, destroyedForm);
     switchContext(UI_IDLE);
 }
 
 void MenuController::cancelDestroy() {
     _destroy.active = false;
-    safeCallback(_callbacks->onDestroyCancelled);
+    safeCallback(&UICallbacks::onDestroyCancelled);
     switchContext(UI_IDLE);
 }
 
@@ -636,7 +636,7 @@ void MenuController::handleTimeSetup(GameInput action) {
                 } else {
                     _initialTime.active = false;
                     _initialTime.awaitingConfirm = false;
-                    safeCallback(_callbacks->onInitialTimeConfirm,
+                    safeCallback(&UICallbacks::onInitialTimeConfirm,
                                  _initialTime.year, _initialTime.month, _initialTime.day,
                                  _initialTime.hour, _initialTime.minute);
                 }
@@ -657,7 +657,7 @@ void MenuController::handleTimeSetup(GameInput action) {
 }
 
 void MenuController::emitInitialTimeEdit() {
-    safeCallback(_callbacks->onInitialTimeEdit,
+    safeCallback(&UICallbacks::onInitialTimeEdit,
                  _initialTime.year, _initialTime.month, _initialTime.day,
                  _initialTime.hour, _initialTime.minute, _initialTime.fieldIndex,
                  _initialTime.awaitingConfirm);

@@ -7,6 +7,7 @@
 #define MENU_CONTROLLER_H
 
 #include <stdint.h>
+#include <utility>
 #include "input_map.h"
 #include "input_manager.h"
 #include "../core/game_state.h"
@@ -162,10 +163,12 @@ private:
     void emitInitialTimeEdit();
     void incrementInitialTimeField();
 
-    // 回调安全调用
-    template<typename Func, typename... Args>
-    void safeCallback(Func func, Args&&... args) {
-        if (_callbacks && func) func(args...);
+    // 回调安全调用（UICallbacks 内为函数指针字段：用成员数据指针，避免实参求值时解引用 _callbacks）
+    template<typename Sig, typename... Args>
+    void safeCallback(Sig UICallbacks::*member, Args&&... args) {
+        if (!_callbacks) return;
+        Sig fn = _callbacks->*member;
+        if (fn) fn(std::forward<Args>(args)...);
     }
 };
 

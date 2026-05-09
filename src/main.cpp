@@ -738,6 +738,12 @@ void processCommand(const char* cmd) {
     if (cmd[0] == 't' && cmd[1] == ' ') {
         int minutes = atoi(cmd + 2);
         if (minutes > 0) {
+            const int MAX_SERIAL_ADVANCE_MIN = 10080;  // 7 days; avoids huge onIdleBatch loops
+            if (minutes > MAX_SERIAL_ADVANCE_MIN) {
+                Serial.printf("[Time] Clamped advance to %d min (requested %d)\n",
+                              MAX_SERIAL_ADVANCE_MIN, minutes);
+                minutes = MAX_SERIAL_ADVANCE_MIN;
+            }
             timeManager.advanceMinutes(minutes);
             DisplayManager::showToast("Time advanced", 1000);
             uint32_t now = timeManager.now();
@@ -932,7 +938,9 @@ void setup() {
     powerManager.init();
 
     timeManager.init();
-    saveManager.init();
+    if (saveManager.init() != SAVE_OK) {
+        Serial.println("[Main] WARNING: saveManager init failed; persistence may be unavailable");
+    }
 
     // 初始化图鉴系统
     gallerySystem.init();
@@ -1047,7 +1055,10 @@ void enterDeepSleep() {
     rtc_us_at_sleep = esp_rtc_get_time_us();
 
     // 确保 RTC 外设域保持供电，否则 RTC pullup 可能在 deep sleep 期间失效，导致 EXT1(ANY_LOW) 秒醒
-    esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);
+    esp_err_t sleepCfg = esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);
+    if (sleepCfg != ESP_OK) {
+        Serial.printf("[Sleep] esp_sleep_pd_config failed: %s\n", esp_err_to_name(sleepCfg));
+    }
 
     // 防止“刚入睡就立刻唤醒”：
     // EXT1(ANY_LOW) 在入睡瞬间如果检测到唤醒脚为低电平会马上唤醒。
@@ -1073,7 +1084,23 @@ void enterDeepSleep() {
     wakeupMask |= (1ULL << PIN_BTN_L);
     wakeupMask |= (1ULL << PIN_BTN_M);
     wakeupMask |= (1ULL << PIN_BTN_R);
-    esp_sleep_enable_ext1_wakeup(wakeupMask, ESP_EXT1_WAKEUP_ANY_LOW);
+    const int EXT1_WAKEUP_RETRIES = 8;
+    for (int attempt = 0; attempt < EXT1_WAKEUP_RETRIES; ++attempt) {
+        sleepCfg = esp_sleep_enable_ext1_wakeup(wakeupMask, ESP_EXT1_WAKEUP_ANY_LOW);
+        if (sleepCfg == ESP_OK) break;
+        Serial.printf("[Sleep] esp_sleep_enable_ext1_wakeup failed (try %d/%d): %s\n",
+                      attempt + 1, EXT1_WAKEUP_RETRIES, esp_err_to_name(sleepCfg));
+        delay(5);
+    }
+    if (sleepCfg != ESP_OK) {
+        // 未真正入睡时释放 hold，避免唤醒脚长期卡在 RTC hold 影响按键
+        for (gpio_num_t pin : wakePins) {
+            if (rtc_gpio_is_valid_gpio(pin)) {
+                rtc_gpio_hold_dis(pin);
+            }
+        }
+        return;
+    }
 
     // 不再用“每60秒唤醒”来维持计时：
     // deep sleep 期间由 RTC 计数器自然推进；唤醒时一次性计算经过秒数并补偿。
@@ -1098,17 +1125,27 @@ void loop() {
     // 2. Power management update
     powerManager.update(millis());
 
-    // 检查是否需要进入 deep sleep
-    if (powerManager.shouldEnterDeepSleep()) {
-        powerManager.clearSleepFlag();
+    uint32_t hwNow = millis();
+
+    // 3. 输入在深睡尝试之前：熄屏后若入睡失败，重试间隙内用户可按键亮屏并取消重试
+    menuController.update();
+
+    bool firstDeepSleep = powerManager.shouldEnterDeepSleep();
+    bool retryDeepSleep = (powerManager.getState() == POWER_OFF &&
+                           powerManager.isDeepSleepRetryDue(hwNow));
+    if (firstDeepSleep || retryDeepSleep) {
+        if (firstDeepSleep) {
+            powerManager.clearSleepFlag();
+        }
+        powerManager.cancelDeepSleepRetry();
         enterDeepSleep();
+        if (powerManager.getState() == POWER_OFF) {
+            powerManager.scheduleDeepSleepRetry(millis());
+        }
         return;
     }
 
-    // 3. MenuController (processes button input -> game actions)
-    menuController.update();
-
-    // 3. Time-based game logic
+    // 4. Time-based game logic
     uint32_t now = timeManager.now();
 
     // Idle tick: seriousness growth + rhongo timer
@@ -1148,7 +1185,7 @@ void loop() {
         }
     }
 
-    // 4. Display update (state machine + render)
+    // 5. Display update (state machine + render)
     DisplayManager::updatePetSnapshot(pet);
     DisplayManager::update(millis());
 
