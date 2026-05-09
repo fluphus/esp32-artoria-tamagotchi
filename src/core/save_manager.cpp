@@ -5,6 +5,7 @@
 #include "../pet/gallery.h"
 #include <Arduino.h>
 #include <Preferences.h>
+#include <string.h>
 
 SaveManager saveManager;
 
@@ -141,6 +142,41 @@ SaveResult SaveManager::load(PetState& pet) {
 
     Serial.println("[Save] All slots failed");
     return SAVE_ERR_NO_DATA;
+}
+
+// expectedEpoch 须与触发本次校验前对 save() 传入的 saveTime 相同（不在此重采 timeManager）
+bool SaveManager::verifyLatestSave(uint32_t expectedEpoch, const PetState& pet) {
+    if (!_initialized) return false;
+
+    uint8_t newestSlot = 0;
+    uint32_t maxSeq = 0;
+    bool any = false;
+    for (uint8_t i = 0; i < SAVE_SLOT_COUNT; i++) {
+        SaveHeader hdr;
+        if (!readSlotHeader(i, hdr)) continue;
+        any = true;
+        if (hdr.sequence >= maxSeq) {
+            maxSeq = hdr.sequence;
+            newestSlot = i;
+        }
+    }
+    if (!any) return false;
+
+    SaveHeader hdr;
+    size_t readLen = prefs.getBytes(slotHdrKey(newestSlot), &hdr, sizeof(SaveHeader));
+    if (readLen != sizeof(SaveHeader)) return false;
+    if (hdr.version != SAVE_DATA_VERSION) return false;
+    if (hdr.data_size != sizeof(PetState)) return false;
+    if (hdr.save_time != expectedEpoch) return false;
+
+    uint16_t petSum = calcChecksum((const uint8_t*)&pet, sizeof(PetState));
+    if (hdr.checksum != petSum) return false;
+
+    PetState temp;
+    SaveResult lr = loadSlot(newestSlot, temp);
+    if (lr != SAVE_OK) return false;
+
+    return memcmp(&temp, &pet, sizeof(PetState)) == 0;
 }
 
 SaveResult SaveManager::loadSlot(uint8_t slot, PetState& pet) {

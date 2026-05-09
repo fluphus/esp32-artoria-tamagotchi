@@ -407,8 +407,12 @@ void doDayEnd() {
         }
         feedingSystem.resetDaily(pet, timeManager.getDay());
         pet.age_days++;
-        saveManager.save(pet, timeManager.now());
-        saveManager.markSaved(now);
+        SaveResult dR = saveManager.save(pet, timeManager.now());
+        if (dR == SAVE_OK) {
+            saveManager.markSaved(now);
+        } else {
+            Serial.printf("[DayEnd] WARN: save failed (%d)\n", (int)dR);
+        }
         return;
     }
 
@@ -452,8 +456,12 @@ void doDayEnd() {
     Serial.printf("[DayEnd] Day %d done.\n", pet.age_days);
     DisplayManager::showDayEndComplete(pet.age_days);
 
-    saveManager.save(pet, timeManager.now());
-    saveManager.markSaved(now);
+    SaveResult dR = saveManager.save(pet, timeManager.now());
+    if (dR == SAVE_OK) {
+        saveManager.markSaved(now);
+    } else {
+        Serial.printf("[DayEnd] WARN: save failed (%d)\n", (int)dR);
+    }
 }
 
 void doReset() {
@@ -563,8 +571,13 @@ void skipTime(uint32_t offlineSeconds) {
     }
 
     Serial.printf("[Offline] Compensation complete. Age: Day %d\n", pet.age_days);
-    saveManager.save(pet, timeManager.now());
-    saveManager.markSaved(timeManager.now());
+    uint32_t ts = timeManager.now();
+    SaveResult oR = saveManager.save(pet, ts);
+    if (oR == SAVE_OK) {
+        saveManager.markSaved(ts);
+    } else {
+        Serial.printf("[Offline] WARN: save failed (%d)\n", (int)oR);
+    }
     printStatus();
 }
 
@@ -1043,15 +1056,40 @@ void setup() {
 // ============================================================================
 
 void enterDeepSleep() {
-    // 保存当前状态
-    uint32_t nowEpoch = timeManager.now();
-    SaveResult r = saveManager.save(pet, nowEpoch);
-    if (r == SAVE_OK) saveManager.markSaved(timeManager.now());
+    // 入睡前存档：每次尝试先采一次游戏时间 nowEpoch，save 与 verify 共用该值（验证的是「本笔写入的时间戳」，非 verify 时刻再读时钟）
+    // 读回校验 save_time + pet 一致；失败重试，至多 3 次（首次 + 重试 2 次）
+    const int SLEEP_SAVE_ATTEMPTS = 3;
+    bool sleepSaveVerified = false;
+    uint32_t verifiedEpoch = 0;
+    for (int attempt = 0; attempt < SLEEP_SAVE_ATTEMPTS; attempt++) {
+        uint32_t nowEpoch = timeManager.now();  // 与本轮 save / verifyLatestSave 绑定，避免延迟导致时间比对误判
+        SaveResult r = saveManager.save(pet, nowEpoch);
+        if (r != SAVE_OK) {
+            Serial.printf("[Sleep] pre-sleep save failed (try %d/%d, err=%d)\n",
+                          attempt + 1, SLEEP_SAVE_ATTEMPTS, (int)r);
+            continue;
+        }
+        if (!saveManager.verifyLatestSave(nowEpoch, pet)) {
+            Serial.printf("[Sleep] pre-sleep save verify failed (try %d/%d)\n",
+                          attempt + 1, SLEEP_SAVE_ATTEMPTS);
+            continue;
+        }
+        sleepSaveVerified = true;
+        verifiedEpoch = nowEpoch;
+        saveManager.markSaved(timeManager.now());
+        break;
+    }
+    if (!sleepSaveVerified) {
+        Serial.println("[Sleep] ABORT: save not verified; not entering deep sleep");
+        Serial.flush();
+        return;
+    }
+
     Serial.println("[Power] Entering deep sleep...");
     Serial.flush();
 
-    // 记录 deep sleep 基准：RTC us + epoch
-    epoch_at_sleep = nowEpoch;
+    // 记录 deep sleep 基准：RTC us + epoch（与已通过校验的那次 save 的 saveTime 一致）
+    epoch_at_sleep = verifiedEpoch;
     rtc_us_at_sleep = esp_rtc_get_time_us();
 
     // 确保 RTC 外设域保持供电，否则 RTC pullup 可能在 deep sleep 期间失效，导致 EXT1(ANY_LOW) 秒醒
@@ -1182,6 +1220,13 @@ void loop() {
         if (r == SAVE_OK) {
             saveManager.markSaved(now);
             DisplayManager::showAutoSave();
+        } else {
+            static uint32_t lastAutoSaveFailLogMs = 0;
+            uint32_t ms = millis();
+            if (ms - lastAutoSaveFailLogMs >= 3000) {
+                lastAutoSaveFailLogMs = ms;
+                Serial.printf("[Save] WARN: auto-save failed (%d)\n", (int)r);
+            }
         }
     }
 

@@ -306,8 +306,13 @@ void MenuController::handleSpecialFood(GameInput action) {
                     }
                 }
 
-                saveManager.save(*_pet, timeManager.now());
-                saveManager.markSaved(timeManager.now());
+                uint32_t ts = timeManager.now();
+                SaveResult sr = saveManager.save(*_pet, ts);
+                if (sr == SAVE_OK) {
+                    saveManager.markSaved(ts);
+                } else {
+                    Serial.printf("[MC] WARN: special-food save failed (%d)\n", (int)sr);
+                }
                 switchContext(UI_IDLE);
             }
             break;
@@ -456,9 +461,12 @@ void MenuController::confirmFeed() {
         safeCallback(&UICallbacks::onEvolution, eR, _pet->seriousness);
     }
 
-    // 保存
-    saveManager.save(*_pet, timeManager.now());
-    saveManager.markSaved(now);
+    SaveResult sr = saveManager.save(*_pet, timeManager.now());
+    if (sr == SAVE_OK) {
+        saveManager.markSaved(now);
+    } else {
+        Serial.printf("[MC] WARN: feed save failed (%d)\n", (int)sr);
+    }
 }
 
 void MenuController::cancelFeed() {
@@ -558,8 +566,12 @@ void MenuController::executeDestroy() {
     _combo_pending = false;
     _destroy.active = false;
 
-    saveManager.save(*_pet, timeManager.now());
-    saveManager.markSaved(now);
+    SaveResult sr = saveManager.save(*_pet, timeManager.now());
+    if (sr == SAVE_OK) {
+        saveManager.markSaved(now);
+    } else {
+        Serial.printf("[MC] WARN: destroy save failed (%d)\n", (int)sr);
+    }
 
     safeCallback(&UICallbacks::onDestroyExecuted, destroyedForm);
     switchContext(UI_IDLE);

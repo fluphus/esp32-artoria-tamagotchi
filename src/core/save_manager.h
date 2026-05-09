@@ -42,6 +42,11 @@ public:
     // 读档 (按新到旧顺序尝试)
     SaveResult load(PetState& pet);
 
+    // 校验 sequence 最新的槽：header.save_time 须等于「本次 save() 传入的 saveTime」
+    // （调用方应对同一次尝试传入与 save() 相同的 expectedEpoch；不在此函数内再次采样时钟，避免处理延迟误判）
+    // 且内容与 pet 一致（checksum + 读回 memcmp）
+    bool verifyLatestSave(uint32_t expectedEpoch, const PetState& pet);
+
     // 是否存在至少一个有效存档
     bool hasSave();
 
