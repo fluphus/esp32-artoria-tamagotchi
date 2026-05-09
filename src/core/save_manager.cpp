@@ -11,7 +11,7 @@ SaveManager saveManager;
 
 static Preferences prefs;
 
-// NVS key 名称 (每个槽独立)
+// NVS key 名称 (slot0=存档1, slot1=存档2)
 static const char* HDR_KEYS[SAVE_SLOT_COUNT]  = { "s0_hdr", "s1_hdr" };
 static const char* DATA_KEYS[SAVE_SLOT_COUNT] = { "s0_dat", "s1_dat" };
 
@@ -32,6 +32,7 @@ SaveResult SaveManager::init() {
 
     _initialized = true;
     _lastSaveTime = 0;
+    _stickyWriteSlot = 0xFF;
 
     Serial.println("[Save] NVS initialized (dual-slot)");
 
@@ -43,9 +44,10 @@ SaveResult SaveManager::init() {
         if (readSlotHeader(i, hdr)) {
             validCount++;
             if (hdr.sequence > maxSeq) maxSeq = hdr.sequence;
-            Serial.printf("[Save] Slot %d: seq=%lu, ver=%d\n", i, hdr.sequence, hdr.version);
+            Serial.printf("[Save] 存档%u (slot %u): seq=%lu, ver=%d\n",
+                          (unsigned)(i + 1), i, hdr.sequence, hdr.version);
         } else {
-            Serial.printf("[Save] Slot %d: empty/invalid\n", i);
+            Serial.printf("[Save] 存档%u (slot %u): empty/invalid\n", (unsigned)(i + 1), i);
         }
     }
 
@@ -62,7 +64,7 @@ SaveResult SaveManager::init() {
 SaveResult SaveManager::save(const PetState& pet, uint32_t saveTime) {
     if (!_initialized) return SAVE_ERR_NVS_INIT;
 
-    uint8_t targetSlot = getOldestSlot();
+    uint8_t targetSlot = getSaveTargetSlot();
 
     // 构建存档头
     SaveHeader header;
@@ -75,19 +77,31 @@ SaveResult SaveManager::save(const PetState& pet, uint32_t saveTime) {
     // 写入头
     size_t written = prefs.putBytes(slotHdrKey(targetSlot), &header, sizeof(SaveHeader));
     if (written != sizeof(SaveHeader)) {
-        Serial.printf("[Save] ERROR: Failed to write header to slot %d\n", targetSlot);
+        Serial.printf("[Save] ERROR: Failed to write header to 存档%u (slot %u)\n",
+                      (unsigned)(targetSlot + 1), targetSlot);
         return SAVE_ERR_WRITE;
     }
 
     // 写入数据
     written = prefs.putBytes(slotDataKey(targetSlot), &pet, sizeof(PetState));
     if (written != sizeof(PetState)) {
-        Serial.printf("[Save] ERROR: Failed to write data to slot %d\n", targetSlot);
+        Serial.printf("[Save] ERROR: Failed to write data to 存档%u (slot %u)\n",
+                      (unsigned)(targetSlot + 1), targetSlot);
         return SAVE_ERR_WRITE;
     }
 
-    Serial.printf("[Save] Slot %d saved (seq=%lu, %d bytes, crc=0x%04X)\n",
-                  targetSlot, _nextSequence, (int)sizeof(PetState), header.checksum);
+    if (!verifyWrittenSlot(targetSlot, saveTime, _nextSequence, pet)) {
+        _stickyWriteSlot = targetSlot;
+        Serial.printf("[Save] VERIFY FAIL: 存档%u (slot %u) data invalid after write; "
+                      "will retry this slot until OK (seq still %lu)\n",
+                      (unsigned)(targetSlot + 1), targetSlot, _nextSequence);
+        return SAVE_ERR_VERIFY;
+    }
+
+    _stickyWriteSlot = 0xFF;
+    Serial.printf("[Save] 存档%u (slot %u) saved (seq=%lu, %d bytes, crc=0x%04X)\n",
+                  (unsigned)(targetSlot + 1), targetSlot, _nextSequence,
+                  (int)sizeof(PetState), header.checksum);
 
     _nextSequence++;
     return SAVE_OK;
@@ -232,6 +246,30 @@ uint8_t SaveManager::getOldestSlot() {
     return oldest;
 }
 
+uint8_t SaveManager::getSaveTargetSlot() {
+    if (_stickyWriteSlot < SAVE_SLOT_COUNT)
+        return _stickyWriteSlot;
+    return getOldestSlot();
+}
+
+bool SaveManager::verifyWrittenSlot(uint8_t slot, uint32_t saveTime, uint32_t expectedSeq,
+                                    const PetState& pet) {
+    SaveHeader hdr;
+    size_t readLen = prefs.getBytes(slotHdrKey(slot), &hdr, sizeof(SaveHeader));
+    if (readLen != sizeof(SaveHeader)) return false;
+    if (hdr.version != SAVE_DATA_VERSION) return false;
+    if (hdr.data_size != sizeof(PetState)) return false;
+    if (hdr.sequence != expectedSeq) return false;
+    if (hdr.save_time != saveTime) return false;
+
+    uint16_t petSum = calcChecksum((const uint8_t*)&pet, sizeof(PetState));
+    if (hdr.checksum != petSum) return false;
+
+    PetState temp;
+    if (loadSlot(slot, temp) != SAVE_OK) return false;
+    return memcmp(&temp, &pet, sizeof(PetState)) == 0;
+}
+
 bool SaveManager::hasSave() {
     if (!_initialized) return false;
     for (uint8_t i = 0; i < SAVE_SLOT_COUNT; i++) {
@@ -246,6 +284,7 @@ SaveResult SaveManager::erase() {
 
     prefs.clear();
     _nextSequence = 1;
+    _stickyWriteSlot = 0xFF;
     Serial.println("[Save] All save data erased");
 
     return SAVE_OK;
