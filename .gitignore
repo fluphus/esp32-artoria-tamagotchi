@@ -5,3 +5,5 @@
 .vscode/ipch
 __pycache__/
 *.pyc
+
+tools/serial_feature_test.py
