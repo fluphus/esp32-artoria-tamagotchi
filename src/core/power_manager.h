@@ -67,7 +67,7 @@ public:
     // 从 deep sleep 唤醒后调用
     void onWakeFromSleep();
 
-    // 保存/加载配置到 NVS
+    // 保存/加载配置到 NVS (各 setter 修改后会自动 saveConfig; pwrsave 仍可手动再存)
     void saveConfig();
     void loadConfig();
 

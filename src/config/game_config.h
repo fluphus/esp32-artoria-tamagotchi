@@ -58,7 +58,7 @@
 
 // --- 存档 ---
 #define SAVE_NVS_NAMESPACE          "fate_tama"
-#define SAVE_DATA_VERSION           8       // 版本号升级 (增加 rounds 字段)
+#define SAVE_DATA_VERSION           9       // 版本号升级 (rounds 移入 DeviceState, 串门机制)
 
 // --- Nobu 彩蛋触发概率 (‰, 千分比) ---
 #define NOBU_BASE_PERMILLE          10      // 基础触发概率 10/1000 = 1% 某六字紧张刺激的指令卡战斗神秘游戏的神奇妙妙概率

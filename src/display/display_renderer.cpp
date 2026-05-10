@@ -54,7 +54,7 @@ void DisplayRenderer::drawStatus(const DisplayModel& model) {
         Serial.printf("[Display]   HP: %d  SR: %d\n", p.health, p.seriousness);
         Serial.printf("[Display]   Age: Day %d  Stage: %s\n", p.age_days + 1,
             p.stage == STAGE_CHILD ? "Child" : "Adult");
-        Serial.printf("[Display]   Rounds: %d\n", p.rounds);
+        Serial.printf("[Display]   Rounds: %d\n", model.deviceRounds);
         Serial.printf("[Display]   Align: %s\n", ALIGNMENT_NAMES[p.alignment]);
     }
 }
@@ -548,7 +548,7 @@ void DisplayRenderer::drawStatus(const DisplayModel& model) {
         tft.setCursor(STATUS_LABEL_X, y); tft.printf("Age: Day %d", p.age_days + 1);
         y += STATUS_LINE_H;
 
-        tft.setCursor(STATUS_LABEL_X, y); tft.printf("Rounds: %d", p.rounds);
+        tft.setCursor(STATUS_LABEL_X, y); tft.printf("Rounds: %d", model.deviceRounds);
         y += STATUS_LINE_H;
 
         tft.setCursor(STATUS_LABEL_X, y); tft.printf("Fed: %d/%d", p.daily_feed.feed_count, DAILY_FEED_LIMIT);

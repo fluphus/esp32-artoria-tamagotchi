@@ -35,7 +35,7 @@ void TimeManager::init() {
     // 初始化为当前值, 防止首次 loop 误触发 checkNewMinute/checkNewDay
     TimeInfo t = getTimeInfo();
     _last_minute = t.minute;
-    _last_day = t.day;
+    _last_epoch_day = now() / 86400u;
 
     Serial.println("[Time] TimeManager initialized (simulated mode)");
 
@@ -99,6 +99,10 @@ void TimeManager::advanceMinutes(uint32_t minutes) {
     Serial.printf("[Time] Advanced %lu min -> %s\n", minutes, buf);
 }
 
+void TimeManager::advanceSeconds(uint32_t seconds) {
+    _advance_offset += seconds;
+}
+
 void TimeManager::advanceDays(uint32_t days) {
     _advance_offset += days * 86400;
 
@@ -116,7 +120,7 @@ void TimeManager::setSimulatedTime(uint16_t year, uint8_t month, uint8_t day,
     // 关键：重设时间后同步变化检测基线，避免下个 loop 误触发 newMinute/newDay
     TimeInfo t = getTimeInfo();
     _last_minute = t.minute;
-    _last_day = t.day;
+    _last_epoch_day = now() / 86400u;
 
     char buf[24];
     getFormattedFull(buf, sizeof(buf));
@@ -133,9 +137,9 @@ bool TimeManager::checkNewMinute() {
 }
 
 bool TimeManager::checkNewDay() {
-    uint8_t currentDay = getDay();
-    if (currentDay != _last_day) {
-        _last_day = currentDay;
+    uint32_t dayIndex = now() / 86400u;
+    if (dayIndex != _last_epoch_day) {
+        _last_epoch_day = dayIndex;
         return true;
     }
     return false;

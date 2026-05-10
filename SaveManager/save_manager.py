@@ -196,9 +196,10 @@ def _print_status_grouped(statuses: list[SlotStatus], blocks: dict[int, list[str
             print()
 
 
-def cmd_export(port: str, baud: int, timeout: float, slot: int, out_path: Path) -> None:
+def cmd_export(port: str, baud: int, timeout: float, slot: int, out_path: Path, pet_only: bool = False) -> None:
     with _open_serial(port, baud, timeout) as ser:
-        _write_line(ser, f"SAVE_EXPORT {slot}")
+        cmd = f"SAVE_EXPORT_PET {slot}" if pet_only else f"SAVE_EXPORT {slot}"
+        _write_line(ser, cmd)
 
         begin = _wait_for_lines(
             ser,
@@ -317,7 +318,7 @@ def cmd_import(port: str, baud: int, timeout: float, slot: int, in_path: Path) -
 
         _write_line(ser, "SAVE_IMPORT_COMMIT")
 
-        # 等 OK 或 FAILED（设备导入成功后会进入强制设时 UI，后续命令会被阻塞）
+        # 等 OK 或 FAILED
         start = time.time()
         seen_lines: list[str] = []
         while time.time() - start < timeout:
@@ -326,16 +327,15 @@ def cmd_import(port: str, baud: int, timeout: float, slot: int, in_path: Path) -
                 continue
             if len(seen_lines) < 20:
                 seen_lines.append(line)
-            if "[SaveImport] OK" in line or line.startswith("[SaveImport] OK"):
-                print(f"导入完成：{in_path} -> slot{slot}")
-                print("设备端已进入强制设时流程；请用按键设时或发送 SET_TIME <epoch>。")
+            if "[SaveImport] Full backup restored" in line:
+                print(f"完整备份恢复完成：{in_path} -> slot{slot}")
                 return
-            # 某些情况下可能错过 OK 行，但出现设时提示可视为导入成功
-            if ("[ImportClock] Set current date/time" in line or
-                "[Main] Waiting for date/time setup" in line):
-                print(f"导入完成（通过设时提示判定）：{in_path} -> slot{slot}")
-                print("设备端已进入强制设时流程；请用按键设时或发送 SET_TIME <epoch>。")
+            if "[SaveImport] Visit started" in line:
+                print(f"串门开始：{in_path} -> slot{slot}")
+                print("访客宠物已加载。销毁(reset)访客宠物将结束串门并恢复主人宠物。")
                 return
+            if "[SaveImport] REJECTED" in line:
+                raise RuntimeError(f"设备端拒绝导入: {line}")
             if "[SaveImport] FAILED" in line or line.startswith("[SaveImport] FAILED"):
                 raise RuntimeError(f"设备端导入失败: {line}")
             if ("Incomplete payload" in line or
@@ -349,8 +349,9 @@ def cmd_import(port: str, baud: int, timeout: float, slot: int, in_path: Path) -
 def _print_commands() -> None:
     print("可用命令（输入括号内的简写）：")
     print("  (st) 查询存档状态")
-    print("  (ex) 导出指定槽到本地 .bin")
-    print("  (im) 导入本地 .bin 覆盖到指定槽")
+    print("  (ex) 导出完整备份（宠物+图鉴）到本地 .bin")
+    print("  (ep) 导出仅宠物（用于串门/交换）到本地 .bin")
+    print("  (im) 导入本地 .bin 到指定槽")
     print("  (q)  退出")
 
 
@@ -405,11 +406,18 @@ def _interactive_main() -> int:
             continue
         if cmd == "ex":
             slot = _prompt_int("请输入槽位（0/1/2）", allowed=[0, 1, 2], default=0)
-            out_path = Path(_prompt("请输入输出文件路径", f"slot{slot}.bin"))
-            cmd_export(port, baud, timeout, slot, out_path)
+            out_path = Path(_prompt("请输入输出文件路径", f"slot{slot}_full.bin"))
+            cmd_export(port, baud, timeout, slot, out_path, pet_only=False)
+            continue
+        if cmd == "ep":
+            slot = _prompt_int("请输入槽位（0/1/2）", allowed=[0, 1, 2], default=0)
+            out_path = Path(_prompt("请输入输出文件路径", f"slot{slot}_pet.bin"))
+            cmd_export(port, baud, timeout, slot, out_path, pet_only=True)
             continue
         if cmd == "im":
-            print("导入规则：导入槽会成为活跃槽，另一个活跃槽自动选择其余两槽中更旧的一槽，剩余一槽冻结保留不再参与后续覆盖。")
+            print("导入规则：")
+            print("  - 带图鉴数据的文件 = 完整备份恢复（覆盖图鉴）")
+            print("  - 仅宠物数据的文件 = 串门（冻结主人宠物，加载访客）")
             slot = _prompt_int("请输入槽位（0/1/2）", allowed=[0, 1, 2], default=0)
             in_path = Path(_prompt("请输入要导入的 .bin 文件路径"))
             cmd_import(port, baud, timeout, slot, in_path)
@@ -433,6 +441,7 @@ def main(argv: list[str]) -> int:
     exp = sub.add_parser("export", help="导出指定槽位到本地 .bin")
     exp.add_argument("--slot", type=int, required=True, choices=[0, 1, 2])
     exp.add_argument("--out", type=Path, required=True)
+    exp.add_argument("--pet-only", action="store_true", help="仅导出宠物（不含图鉴，用于串门/交换）")
 
     imp = sub.add_parser("import", help="导入本地 .bin 覆盖到指定槽位")
     imp.add_argument("--slot", type=int, required=True, choices=[0, 1, 2])
@@ -452,7 +461,7 @@ def main(argv: list[str]) -> int:
         return 0
 
     if args.cmd == "export":
-        cmd_export(args.port, args.baud, args.timeout, args.slot, args.out)
+        cmd_export(args.port, args.baud, args.timeout, args.slot, args.out, pet_only=getattr(args, 'pet_only', False))
         return 0
 
     if args.cmd == "import":

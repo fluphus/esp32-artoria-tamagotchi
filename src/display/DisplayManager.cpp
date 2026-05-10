@@ -320,6 +320,11 @@ void DisplayManager::updatePetSnapshot(const PetState& pet) {
     }
 }
 
+void DisplayManager::setDeviceInfo(uint16_t rounds, bool isVisiting) {
+    _model.deviceRounds = rounds;
+    _model.isVisiting = isVisiting;
+}
+
 // ============================================================================
 //  show* 实现 - 只更新 model + 页面 + 动画 + dirty
 // ============================================================================

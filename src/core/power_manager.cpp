@@ -96,22 +96,26 @@ void PowerManager::setBrightness(uint8_t level) {
         applyBrightness(_brightness);
     }
     Serial.printf("[Power] Brightness set to %d\n", _brightness);
+    saveConfig();
 }
 
 void PowerManager::setDimBrightness(uint8_t level) {
     if (level > 15) level = 15;
     _dimBrightness = level;
     Serial.printf("[Power] Dim brightness set to %d\n", _dimBrightness);
+    saveConfig();
 }
 
 void PowerManager::setDimTimeout(uint32_t seconds) {
     _dimTimeoutSec = seconds;
     Serial.printf("[Power] Dim timeout set to %lu seconds\n", _dimTimeoutSec);
+    saveConfig();
 }
 
 void PowerManager::setOffTimeout(uint32_t seconds) {
     _offTimeoutSec = seconds;
     Serial.printf("[Power] Off timeout set to %lu seconds\n", _offTimeoutSec);
+    saveConfig();
 }
 
 void PowerManager::onWakeFromSleep() {

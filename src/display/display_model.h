@@ -20,6 +20,8 @@
 struct DisplayModel {
     // --- 宠物快照 ---
     PetState petSnapshot;
+    uint16_t deviceRounds;          // 设备轮次 (从 DeviceState 同步)
+    bool isVisiting;                // 是否在串门状态
 
     // --- 投喂流程 ---
     FeedDraw feedDraw;

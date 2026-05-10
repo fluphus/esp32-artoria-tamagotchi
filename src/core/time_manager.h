@@ -45,6 +45,7 @@ public:
 
     // --- 模拟时间控制 (调试用) ---
     void advanceMinutes(uint32_t minutes);
+    void advanceSeconds(uint32_t seconds);
     void advanceDays(uint32_t days);
     void setSimulatedTime(uint16_t year, uint8_t month, uint8_t day,
                           uint8_t hour, uint8_t minute);
@@ -69,7 +70,7 @@ private:
     uint32_t _advance_offset = 0;       // 手动快进累计秒数
 
     uint8_t _last_minute = 255;         // 上次检测的分钟
-    uint8_t _last_day = 255;            // 上次检测的日
+    uint32_t _last_epoch_day = 0xFFFFFFFFu;  // 上次检测的 unix 日历日 (now/86400), 用于 checkNewDay
 };
 
 // 全局单例

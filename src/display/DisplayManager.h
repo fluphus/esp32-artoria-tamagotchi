@@ -166,6 +166,9 @@ public:
     // 宠物快照更新 (每帧由 main 调用)
     static void updatePetSnapshot(const PetState& pet);
 
+    // 设备态信息同步 (每帧由 main 调用)
+    static void setDeviceInfo(uint16_t rounds, bool isVisiting);
+
     // 获取 model (只读, 供外部查询)
     static const DisplayModel& getModel() { return _model; }
 

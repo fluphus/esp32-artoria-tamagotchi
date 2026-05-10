@@ -105,7 +105,7 @@ struct InitialTimeSetupState {
 class MenuController {
 public:
     // 初始化
-    void init(PetState* pet, UICallbacks* callbacks);
+    void init(PetState* pet, DeviceState* devState, UICallbacks* callbacks);
 
     // 每帧调用: 处理 InputManager 产出的 GameInput
     void update();
@@ -128,6 +128,7 @@ public:
 
 private:
     PetState*       _pet;
+    DeviceState*    _devState;
     UICallbacks*    _callbacks;
     FeedPickState   _feed;
     DestroyConfirmState _destroy;

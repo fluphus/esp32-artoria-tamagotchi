@@ -8,7 +8,7 @@
 ## ✨ 特性
 * **进化系统：** 基于宠物状态（健康度、严肃度等）的多条成长路线。
 * **时间与日期管理：** 内置时钟用于处理每日重置，以及未按时喂食的惩罚。
-* **持久化存储：** 三槽存档系统，支持校验和验证、按槽串口导入导出，以及导入后时间对齐保护流程。
+* **持久化存储：** 三槽存档系统，支持校验和验证；串口可导出完整备份或仅宠物；导入支持完整恢复或串门（交换宠物）；设备级轮次与时间锚点；导入保护与拒绝规则。
 * **互动操作：** 喂食、戳一戳（互动）以及状态监控。
 * **显示：** 通过 TFT_eSPI 驱动的 SSD1351 128x128 65K 彩色 OLED，并提供用于无头测试的串口占位符后端。
 
@@ -177,7 +177,7 @@ d              # 推移 1 天 (触发日结)
 save           # 手动保存
 load           # 读取存档
 erase          # 擦除存档
-reset          # 销毁并重置宠物
+reset          # 销毁并重置宠物（串门中会结束串门并恢复主人宠物）
 stime Y M D H m  # 设置模拟时间
 SET_TIME <epoch> # 设置系统时间 (unix 时间戳, 触发离线补偿)
 hp <val>       # 调试: 设置健康度 (0-100)
@@ -188,19 +188,20 @@ mapo           # 调试: 麻婆豆腐计数 +1
 FORCE_NOBU     # 调试: 强制进入 nobu 路线
 UNLOCK_ALL     # 调试: 解锁所有图鉴形态
 RESET_GALLERY  # 调试: 重置图鉴 (锁定所有)
-IMPORT_TIME_SETUP  # 强制进入“导入后设时”界面 (不做离线补偿)
 SAVE_SLOT_STATUS   # 打印 slot0/1/2 状态 (seq/time/ver/size/crc)
-SAVE_EXPORT <slot> # 通过串口导出单槽快照 (hex 流)
+SAVE_EXPORT <slot> # 导出完整备份（宠物+图鉴，hex 流）
+SAVE_EXPORT_PET <slot> # 导出仅宠物快照（串门/交换，hex 流）
 SAVE_IMPORT_BEGIN <slot> # 开始单槽导入会话
 SAVE_IMPORT_DATA <hex>   # 追加一段 hex 负载
 SAVE_IMPORT_COMMIT       # 提交导入负载
 SAVE_IMPORT_ABORT        # 取消导入会话
 s0 / s1 / s2   # 打印单槽快照状态
+devinfo        # 打印设备态（轮次、串门、时钟锚点）
 bright <0-15>  # 设置屏幕亮度
 dim <0-15>     # 设置息屏亮度
 dim_t <sec>    # 设置息屏超时 (秒)
 off_t <sec>    # 设置关屏超时 (秒)
-pwrsave        # 保存电源配置到 NVS
+pwrsave        # 保存电源配置到 NVS（可选；调节亮度/超时后也会自动持久化）
 pwrinfo        # 打印电源配置
 btn l|m|r      # 模拟短按
 btnl l|m|r     # 模拟长按
@@ -210,15 +211,31 @@ ctx            # 显示当前 UI 上下文
 
 ## 串口存档导入/导出
 
-项目已支持按槽位的串口导入导出，用于备份和迁移流程。
+项目支持按槽位的串口导入导出，用于备份、迁移以及仅宠物交换（串门）流程。
+
+### 设备态、导出类型与串门模式
+
+部分数据保存在**设备级**（不属于某一槽位快照）：**`rounds`**（完整导入与串门导入成功时递增）、**`device_clock_epoch`**（与 **`SET_TIME`** 配合作为离线补偿基准）、以及串门相关标志（是否在串门、主人槽冻结、串门开始时间）。可用串口命令 **`devinfo`** 查看。
+
+- **`SAVE_EXPORT <slot>`** — **完整备份**：宠物 + 该流程绑定的图鉴数据（体积较大）。
+- **`SAVE_EXPORT_PET <slot>`** — **仅宠物**：用于交换或**串门**（体积较小，不含图鉴块）。
+- **`SAVE_IMPORT_BEGIN`** 后设备会打印 **`[SaveImport] READY ... target_bytes=... (legacy=...)`**，给出完整备份与仅宠物两种期望长度；主机应在 **`SAVE_IMPORT_COMMIT`** 前确认文件字节数与其一一致。
+
+**完整导入**（负载长度 = 完整备份）：从包内恢复图鉴，按规则重建活动槽对，将宠物时间戳对齐到本机时钟，清除串门态，递增 **`rounds`**，更新 **`device_clock_epoch`** 并持久化。
+
+**仅宠物导入**（负载长度 = 仅宠物）：**串门模式** — 在两个活动槽中，较新的存档视为主人槽并在盘上冻结；导入目标槽存放**访客**，并载入内存。本地图鉴保留，但会为访客当前形态按需解锁。若导入目标槽就是主人最新槽，固件会 **`REJECTED`**（请换另一活动槽）。**`rounds`** 与 **`device_clock_epoch`** 的处理与完整导入类似。
+
+**串门期间：** 不允许新的 **`SAVE_IMPORT_*`**；**`SET_TIME`**、**`stime`**、**`t <min>`**、**`d`** 会被拒绝（避免访客在位时改动时间轴）。**`reset`** 会销毁访客并恢复主人（串门结束）。非法包（例如 **`save_time == 0`**）会打印 **`[SaveImport] REJECTED:`** 并中止。
 
 ### 固件侧命令
 
 - `SAVE_SLOT_STATUS`：查询全部槽位状态（`slot0`、`slot1`、`slot2`）。
-- `SAVE_EXPORT <slot>`：导出指定槽位为 hex 数据块。
-- `SAVE_IMPORT_BEGIN <slot>` -> `SAVE_IMPORT_DATA <hex>` -> `SAVE_IMPORT_COMMIT`：导入指定槽位负载。
+- `SAVE_EXPORT <slot>`：导出**完整备份**（宠物 + 图鉴）为 hex 数据块。
+- `SAVE_EXPORT_PET <slot>`：导出**仅宠物**快照为 hex 数据块。
+- `SAVE_IMPORT_BEGIN <slot>` -> `SAVE_IMPORT_DATA <hex>` -> `SAVE_IMPORT_COMMIT`：导入指定槽位（负载长度决定完整恢复或串门）。
 - `SAVE_IMPORT_ABORT`：中止当前导入会话。
 - `s0` / `s1` / `s2`：按状态格式打印单槽快照。
+- `devinfo`：打印设备态（轮次、串门、时钟锚点）。
 
 ### 主机侧辅助脚本（Python）
 
@@ -232,17 +249,17 @@ py save_manager.py
 
 ```bash
 py save_manager.py --port COM5 status
-py save_manager.py --port COM5 export --slot 0 --out slot0.bin
-py save_manager.py --port COM5 import --slot 1 --in slot0.bin
+py save_manager.py --port COM5 export --slot 0 --out slot0_full.bin
+py save_manager.py --port COM5 export --slot 0 --out slot0_pet.bin --pet-only
+py save_manager.py --port COM5 import --slot 1 --in slot0_full.bin
 ```
 
 ### 导入行为（重要）
 
-- 导入槽一定会加入活动存档槽对。
-- 其余两个槽中会选“更旧”的一个作为另一活动槽。
-- 剩余槽会被冻结，不再参与后续自动/手动覆盖轮转。
-- 导入完成后设备会强制进入设时流程，并跳过离线补偿。
-- 完成设时后会对齐并持久化导入存档时间；若校验失败，会在后台持续重试直到成功。
+- **完整备份：** 导入槽加入活动槽对；另两槽中取**更旧**的一槽作为第二活动槽（优先 `sequence`，必要时 `save_time`；空槽视为更旧）。剩余一槽**冻结**，不参与后续自动/手动轮转。成功时串口可出现 **`[SaveImport] Full backup restored ...`**。
+- **仅宠物（串门）：** 冻结主人槽，访客在导入槽；成功时 **`[SaveImport] Visit started ...`**。**`reset`** 结束串门并恢复主人。
+- 若导入完成时设备正处于**首次**时钟设置等待，可能在具备设备时钟锚点时退出该等待；常规已设时的启动流程不受影响。上述导入路径**不会**执行“从旧存档时间一路补算到现在”的离线结算。
+- 对齐后会持久化；若其他逻辑路径校验失败，仍可能按实现进行后台重试。
 
 ## 页面停留行为 (Page Hold Behavior)
 

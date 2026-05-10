@@ -116,7 +116,6 @@ struct PetState {
     uint32_t birth_timestamp;
     uint32_t last_interact_time;
     uint16_t age_days;
-    uint16_t rounds;                  // 当前轮次, 新游戏=1, 每次reset+1
 
     DailyFeedState daily_feed;
 
@@ -147,7 +146,6 @@ struct PetState {
         birth_timestamp = now;
         last_interact_time = now;
         age_days = 0;
-        rounds = 1;
 
         daily_feed.reset(0);
     }
@@ -159,7 +157,24 @@ struct SaveHeader {
     uint16_t data_size;
     uint16_t checksum;
     uint32_t sequence;      // 单调递增序号, 用于判断新旧
-    uint32_t save_time;     // 存档时的 unix timestamp (用于离线补偿)
+    uint32_t save_time;     // 存档时的 unix timestamp (用于 slot 新旧判断, 不再用于离线补偿)
+};
+
+// --- 设备态 (独立于存档, 绑定到本机) ---
+struct DeviceState {
+    uint32_t device_clock_epoch;    // 设备当前时间 (用于离线补偿基准)
+    uint16_t rounds;                // 本机总轮次 (reset次数+1, 导入时+1)
+    bool is_visiting;               // 当前是否在串门状态
+    uint8_t owner_frozen_slot;      // 主人存档锁定在哪个槽 (串门时有效)
+    uint32_t visit_start_epoch;     // 串门开始时的设备时间
+
+    void init() {
+        device_clock_epoch = 0;
+        rounds = 0;
+        is_visiting = false;
+        owner_frozen_slot = 0xFF;
+        visit_start_epoch = 0;
+    }
 };
 
 #endif // GAME_STATE_H

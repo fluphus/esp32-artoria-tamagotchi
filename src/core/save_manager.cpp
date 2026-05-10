@@ -17,7 +17,7 @@ static const char* DATA_KEYS[SAVE_SLOT_COUNT] = { "s0_dat", "s1_dat", "s2_dat" }
 static const char* GALLERY_KEYS[SAVE_SLOT_COUNT] = { "s0_gal", "s1_gal", "s2_gal" };
 static const char* GALLERY_NVS_KEY = "gallery";
 static const char* ACTIVE_PAIR_KEY = "slot_cfg";
-static const char* IMPORT_TIME_REQ_KEY = "imp_treq";
+static const char* DEVICE_STATE_KEY = "dev_state";
 
 static bool isPetStateSemanticallyValid(const PetState& pet) {
     if (pet.form >= FORM_COUNT) return false;
@@ -307,20 +307,26 @@ SaveResult SaveManager::load(PetState& pet) {
 bool SaveManager::verifyLatestSave(uint32_t expectedEpoch, const PetState& pet) {
     if (!_initialized) return false;
 
-    uint8_t newestSlot = 0;
+    // 与 load() 活动槽排序一致: sequence 降序, 同序取槽号较小者 (load 的稳定排序先试小槽)
+    uint8_t newestSlot = 0xFF;
     uint32_t maxSeq = 0;
     bool any = false;
     for (uint8_t i = 0; i < SAVE_SLOT_COUNT; i++) {
         if (!isSlotActive(i)) continue;
         SaveHeader hdr;
         if (!readSlotHeader(i, hdr)) continue;
-        any = true;
-        if (hdr.sequence >= maxSeq) {
+        if (!any) {
+            any = true;
+            maxSeq = hdr.sequence;
+            newestSlot = i;
+            continue;
+        }
+        if (hdr.sequence > maxSeq || (hdr.sequence == maxSeq && i < newestSlot)) {
             maxSeq = hdr.sequence;
             newestSlot = i;
         }
     }
-    if (!any) return false;
+    if (!any || newestSlot >= SAVE_SLOT_COUNT) return false;
 
     SaveHeader hdr;
     size_t readLen = prefs.getBytes(slotHdrKey(newestSlot), &hdr, sizeof(SaveHeader));
@@ -466,10 +472,10 @@ void SaveManager::setActivePairForImportedBaseSlot(uint8_t baseSlot) {
         return;
     }
 
-    // 通用规则：
-    // 1) 导入槽 baseSlot 必入活跃槽对
-    // 2) 在另外两个槽中选“更旧”的那个入活跃槽对（后续轮换写入）
-    // 3) 另一个槽冻结（不参与自动/手动 save 轮换）
+    // 导入完整备份时：不需要保留现有存档
+    // 导入槽 baseSlot 必入活跃槽对
+    // 在另外两个槽中选"更旧"的那个入活跃槽对（后续轮换写入）
+    // 另一个槽冻结（不参与自动/手动 save 轮换）
     uint8_t others[2];
     uint8_t k = 0;
     for (uint8_t i = 0; i < SAVE_SLOT_COUNT; i++) {
@@ -496,13 +502,11 @@ void SaveManager::setActivePairForImportedBaseSlot(uint8_t baseSlot) {
     };
 
     auto olderThan = [&](const SlotAgeInfo& a, const SlotAgeInfo& b) -> bool {
-        // 空槽/无效槽视为更旧
         if (a.valid != b.valid) return !a.valid;
-        if (!a.valid && !b.valid) return a.slot < b.slot;  // 都无效，固定序兜底
-
-        if (a.seq != b.seq) return a.seq < b.seq;          // sequence 小者更旧
+        if (!a.valid && !b.valid) return a.slot < b.slot;
+        if (a.seq != b.seq) return a.seq < b.seq;
         if (a.saveTime != b.saveTime) return a.saveTime < b.saveTime;
-        return a.slot < b.slot;                              // 完全相同时固定序
+        return a.slot < b.slot;
     };
 
     SlotAgeInfo o0 = readAge(others[0]);
@@ -517,15 +521,41 @@ void SaveManager::setActivePairForImportedBaseSlot(uint8_t baseSlot) {
                   _activeSlotA, _activeSlotB, frozen);
 }
 
-void SaveManager::setImportTimeSetupRequired(bool required) {
-    uint8_t v = required ? 1 : 0;
-    prefs.putUChar(IMPORT_TIME_REQ_KEY, v);
-    Serial.printf("[Save] Import-time setup required: %s\n", required ? "YES" : "NO");
+void SaveManager::setActivePairForVisit(uint8_t ownerFrozenSlot) {
+    if (ownerFrozenSlot >= SAVE_SLOT_COUNT) return;
+
+    // 串门：冻结主人存档所在槽，其余两槽作为访客宠物的轮转写入槽
+    uint8_t others[2];
+    uint8_t k = 0;
+    for (uint8_t i = 0; i < SAVE_SLOT_COUNT; i++) {
+        if (i == ownerFrozenSlot) continue;
+        others[k++] = i;
+    }
+    _activeSlotA = others[0];
+    _activeSlotB = others[1];
+    persistActivePairConfig();
+    Serial.printf("[Save] Active slots for visit: %u,%u (owner frozen=%u)\n",
+                  _activeSlotA, _activeSlotB, ownerFrozenSlot);
 }
 
-bool SaveManager::isImportTimeSetupRequired() {
-    uint8_t v = prefs.getUChar(IMPORT_TIME_REQ_KEY, 0);
-    return v == 1;
+void SaveManager::setActivePairAfterVisitEnd(uint8_t ownerSlot) {
+    if (ownerSlot >= SAVE_SLOT_COUNT) return;
+
+    // 串门结束：主人存档槽回到活跃对，另一个槽选更旧的
+    setActivePairForImportedBaseSlot(ownerSlot);
+    Serial.printf("[Save] Active slots restored after visit end (owner=%u)\n", ownerSlot);
+}
+
+void SaveManager::setActivePair(uint8_t a, uint8_t b) {
+    if (a >= SAVE_SLOT_COUNT || b >= SAVE_SLOT_COUNT || a == b) {
+        Serial.printf("[Save] WARN: setActivePair(%u,%u) invalid, reloading from NVS\n", a, b);
+        loadActivePairConfig();
+        return;
+    }
+    _activeSlotA = a;
+    _activeSlotB = b;
+    persistActivePairConfig();
+    Serial.printf("[Save] Active slots set directly: %u,%u\n", _activeSlotA, _activeSlotB);
 }
 
 bool SaveManager::readSlotHeader(uint8_t slot, SaveHeader& hdr) {
@@ -624,7 +654,6 @@ SaveResult SaveManager::erase() {
     _activeSlotA = 0;
     _activeSlotB = 1;
     persistActivePairConfig();
-    setImportTimeSetupRequired(false);
     Serial.println("[Save] All save data erased");
     Serial.println("[Save] Active slots reset to default: 0,1");
 
@@ -673,13 +702,45 @@ SaveResult SaveManager::loadGallery(GalleryData& gallery) {
 
     size_t readLen = prefs.getBytes(GALLERY_NVS_KEY, &gallery, sizeof(GalleryData));
     if (readLen != sizeof(GalleryData)) {
-        // 旧存档兼容: 没有图鉴数据, 安全初始化为空
-        Serial.println("[Save] No gallery data found (old save?), initializing empty");
+        Serial.println("[Save] No gallery data found, initializing empty");
         gallery.init();
         return SAVE_ERR_NO_DATA;
     }
 
     Serial.printf("[Save] Gallery loaded (%d/%d unlocked)\n",
                   gallery.getUnlockedCount(), FORM_COUNT);
+    return SAVE_OK;
+}
+
+// ============================================================================
+//  设备态 (独立 NVS key, 绑定本机)
+// ============================================================================
+
+SaveResult SaveManager::saveDeviceState(const DeviceState& ds) {
+    if (!_initialized) return SAVE_ERR_NVS_INIT;
+
+    size_t written = prefs.putBytes(DEVICE_STATE_KEY, &ds, sizeof(DeviceState));
+    if (written != sizeof(DeviceState)) {
+        Serial.println("[Save] ERROR: Failed to write device state");
+        return SAVE_ERR_WRITE;
+    }
+
+    Serial.printf("[Save] DeviceState saved (rounds=%u, visiting=%d, clock=%lu)\n",
+                  ds.rounds, ds.is_visiting, (unsigned long)ds.device_clock_epoch);
+    return SAVE_OK;
+}
+
+SaveResult SaveManager::loadDeviceState(DeviceState& ds) {
+    if (!_initialized) return SAVE_ERR_NVS_INIT;
+
+    size_t readLen = prefs.getBytes(DEVICE_STATE_KEY, &ds, sizeof(DeviceState));
+    if (readLen != sizeof(DeviceState)) {
+        Serial.println("[Save] No device state found, initializing");
+        ds.init();
+        return SAVE_ERR_NO_DATA;
+    }
+
+    Serial.printf("[Save] DeviceState loaded (rounds=%u, visiting=%d, clock=%lu)\n",
+                  ds.rounds, ds.is_visiting, (unsigned long)ds.device_clock_epoch);
     return SAVE_OK;
 }

@@ -26,12 +26,12 @@
 #endif
 
 static PetState pet;
+static DeviceState deviceState;
 static char cmdBuf[64];
 static uint8_t cmdLen = 0;
 
-// 离线补偿: 等待串口设置时间
+// 离线补偿: 等待设置时间 (仅首次开机/断电恢复时)
 static bool waitingForTimeSet = false;
-static uint32_t loadedSaveTime = 0;  // 存档中记录的时间戳
 // 仅用于新游戏/坏档重建: 在初始时间确认后按最终时间重建 pet 时间基线
 static bool reinitPetAfterInitialTimeConfirm = false;
 
@@ -49,55 +49,104 @@ struct SlotImportSession {
 static SlotImportSession g_slotImport;
 static constexpr uint8_t SAVE_IMPORT_INVALID_MAX = 5;
 
-// 串口导入存档后: 下一遍时间确认不触发离线结算, 且确认后将 save_time 写入 NVS 与当前时钟对齐
-static bool _importFreshClockPersistPending = false;
-static bool _importAlignRetryPending = false;
-static uint32_t _importAlignEpochPending = 0;
-static uint32_t _importAlignLastRetryMs = 0;
-static uint32_t _importAlignLastLogMs = 0;
-static constexpr uint32_t IMPORT_ALIGN_RETRY_INTERVAL_MS = 3000;
+// 串门结束时: 对齐主人宠物的时间戳到当前设备时间
+static void realignOwnerTimestamps(PetState& ownerPet, uint32_t frozenDuration) {
+    // 所有绝对时间戳 += frozenDuration, 使主人宠物的时间锚点对齐到当前设备时间
+    if (ownerPet.idle_paused_until > 0)
+        ownerPet.idle_paused_until += frozenDuration;
+    if (ownerPet.last_poke_effect_time > 0)
+        ownerPet.last_poke_effect_time += frozenDuration;
+    if (ownerPet.rhongo_timer_start > 0)
+        ownerPet.rhongo_timer_start += frozenDuration;
+    if (ownerPet.birth_timestamp > 0)
+        ownerPet.birth_timestamp += frozenDuration;
+    if (ownerPet.last_interact_time > 0)
+        ownerPet.last_interact_time += frozenDuration;
+    if (ownerPet.daily_feed.last_feed_time > 0)
+        ownerPet.daily_feed.last_feed_time += frozenDuration;
+}
 
-static void finalizeImportAlignedSaveIfNeeded(uint32_t saveEpoch) {
-    if (!_importFreshClockPersistPending)
-        return;
-    _importFreshClockPersistPending = false;
-    SaveResult r = saveManager.save(pet, saveEpoch);
-    bool verified = (r == SAVE_OK) && saveManager.verifyLatestSave(saveEpoch, pet);
-    if (!verified) {
-        if (r != SAVE_OK) {
-            Serial.printf("[ImportClock] WARN: save failed (%d), will retry in background\n", (int)r);
-        } else {
-            Serial.println("[ImportClock] WARN: verifyLatestSave failed, will retry in background");
-        }
-        _importAlignRetryPending = true;
-        _importAlignEpochPending = saveEpoch;
-        loadedSaveTime = 0;
-        // 保持 importTimeSetupRequired=true，直到后台重试成功
+// 导入宠物时: 将访客/备份宠物的绝对时间戳从导出方时钟对齐到本机时钟
+// delta = localNow - donorSaveTime (有符号, 支持本机时钟在前或在后)
+// 原理: 导出方存档时 save_time 是其设备时钟, 宠物内所有绝对时间戳也基于该时钟;
+//        导入方用 (本机now - 导出方save_time) 作为偏移量, 将宠物时间锚定到本机时钟.
+// 安全护栏: |delta| > 10年 视为数据异常, 跳过对齐 (避免溢出/乱标定)
+static void realignImportedTimestamps(PetState& pet, uint32_t donorSaveTime, uint32_t localNow, uint8_t localDay) {
+    if (donorSaveTime == 0) {         // 无锚点, 无法对齐; 仍重置日界
+        pet.daily_feed.reset(localDay);
         return;
     }
 
-    saveManager.markSaved(saveEpoch);
-    (void)saveManager.saveGallery(gallerySystem.getData());
-    saveManager.setImportTimeSetupRequired(false);
-    loadedSaveTime = saveEpoch;
-    _importAlignRetryPending = false;
-    _importAlignEpochPending = 0;
-    Serial.printf("[ImportClock] NVS aligned (save_time=%lu)\n", (unsigned long)saveEpoch);
+    int32_t delta = (int32_t)(localNow - donorSaveTime);
+
+    // 安全护栏: |delta| > 10年 (~315M秒) 视为异常, 不做平移
+    constexpr int32_t MAX_REASONABLE_DELTA = 315360000;  // 10 * 365 * 24 * 3600
+    if (delta > MAX_REASONABLE_DELTA || delta < -MAX_REASONABLE_DELTA) {
+        Serial.printf("[TimeAlign] WARNING: delta=%ld sec (>10yr), skipping realignment\n", (long)delta);
+        // 即使跳过平移, 仍重置日界 (否则 daily_feed 必然错乱)
+        pet.daily_feed.reset(localDay);
+        return;
+    }
+
+    // 若 delta 很小 (< 60秒), 不值得平移, 避免无意义微调
+    if (delta > -60 && delta < 60) {
+        // 仍对齐日界
+        pet.daily_feed.reset(localDay);
+        return;
+    }
+
+    Serial.printf("[TimeAlign] Realigning imported pet timestamps, delta=%ld sec\n", (long)delta);
+
+    // 辅助 lambda: 对非零时间戳施加有符号偏移, 并 clamp 到 [1, localNow] 防止溢出/未来值
+    auto shiftTimestamp = [delta, localNow](uint32_t& ts) {
+        if (ts == 0) return;  // 0 = 未设置/特殊语义, 保留
+        int64_t shifted = (int64_t)ts + delta;
+        if (shifted <= 0) shifted = 1;                    // 不允许变为 0 (0 有特殊含义)
+        if (shifted > (int64_t)localNow) shifted = localNow;  // 不允许超过当前时间
+        ts = (uint32_t)shifted;
+    };
+
+    shiftTimestamp(pet.idle_paused_until);
+    shiftTimestamp(pet.last_poke_effect_time);
+    shiftTimestamp(pet.rhongo_timer_start);
+    shiftTimestamp(pet.birth_timestamp);
+    shiftTimestamp(pet.last_interact_time);
+    shiftTimestamp(pet.daily_feed.last_feed_time);
+
+    // 日界强制对齐到本机当天 (date_day 是日历日, 平移无意义, 直接 reset)
+    pet.daily_feed.reset(localDay);
 }
 
-// 在 NVS 导入并 load(pet) 成功后调用: 强制进入与 new game 相同的初始时间 UI, 不触发离线结算
-static void beginInitialTimeSetupAfterImportedSave() {
-    _importFreshClockPersistPending = true;
-    _importAlignRetryPending = false;
-    _importAlignEpochPending = 0;
-    _importAlignLastRetryMs = 0;
-    _importAlignLastLogMs = 0;
-    loadedSaveTime = 0;
-    reinitPetAfterInitialTimeConfirm = false;
-    waitingForTimeSet = true;
-    saveManager.setImportTimeSetupRequired(true);
-    Serial.println("[ImportClock] Set current date/time (no offline settlement). Use UI or SET_TIME <epoch>.");
-    menuController.startInitialTimeSetup(timeManager.timeInfoToEpoch(2026, 1, 1, 0, 0, 0));
+// 串门冻结时长 (秒); 时钟回调时避免无符号下溢
+static uint32_t visitOwnerFrozenElapsedSec(uint32_t now) {
+    if (deviceState.visit_start_epoch == 0 || now < deviceState.visit_start_epoch)
+        return 0;
+    return now - deviceState.visit_start_epoch;
+}
+
+// 保存设备态到 NVS (便捷函数)
+static void persistDeviceState() {
+    saveManager.saveDeviceState(deviceState);
+}
+
+// 主人冻结槽不可读: 清除串门态, 将内存中的访客按一次正常 destroy 收敛为新宠物并持久化
+// (按键结束串门与串口 reset 在同种灾难下共用, 避免 RAM 仍为访客而 is_visiting 已假)
+static void endVisitDiscardOwnerSlotUseGuestAsReset(uint32_t now) {
+    saveManager.setActivePairAfterVisitEnd(deviceState.owner_frozen_slot);
+    deviceState.is_visiting = false;
+    deviceState.owner_frozen_slot = 0xFF;
+    deviceState.visit_start_epoch = 0;
+    deviceState.device_clock_epoch = now;
+    persistDeviceState();
+    evolutionSystem.destroy(pet, now);
+    deviceState.rounds++;
+    persistDeviceState();
+    if (gallerySystem.unlockForm(pet.form)) {
+        saveManager.saveGallery(gallerySystem.getData());
+    }
+    feedingSystem.resetDaily(pet, timeManager.getDay());
+    SaveResult r = saveManager.save(pet, now);
+    if (r == SAVE_OK) saveManager.markSaved(now);
 }
 
 // deep sleep 计时基准（RTC 慢时钟在 deep sleep 期间仍会继续走）
@@ -299,6 +348,37 @@ static UICallbacks gameCallbacks = {
     [](Form destroyedForm) {
         Serial.println("[MC] *** DESTROYED ***");
         DisplayManager::showDestroyExecuted(destroyedForm);
+
+        // 串门结束: 恢复主人宠物
+        if (deviceState.is_visiting) {
+            PetState ownerPet;
+            SaveResult lr = saveManager.loadFromSlot(deviceState.owner_frozen_slot, ownerPet);
+            if (lr == SAVE_OK) {
+                uint32_t now = timeManager.now();
+                uint32_t frozenDuration = visitOwnerFrozenElapsedSec(now);
+                realignOwnerTimestamps(ownerPet, frozenDuration);
+                ownerPet.daily_feed.reset(timeManager.getDay());
+                pet = ownerPet;
+
+                saveManager.setActivePairAfterVisitEnd(deviceState.owner_frozen_slot);
+                deviceState.is_visiting = false;
+                deviceState.owner_frozen_slot = 0xFF;
+                deviceState.visit_start_epoch = 0;
+                deviceState.device_clock_epoch = now;
+                persistDeviceState();
+
+                SaveResult r = saveManager.save(pet, now);
+                if (r == SAVE_OK) saveManager.markSaved(now);
+                Serial.printf("[Visit] Owner restored via button destroy. Frozen: %lu sec\n",
+                              (unsigned long)frozenDuration);
+            } else {
+                Serial.printf("[Visit] CRITICAL: Failed to restore owner from slot %u (err=%d). "
+                              "Force-ending visit, guest reset as new pet.\n",
+                              deviceState.owner_frozen_slot, (int)lr);
+                uint32_t now = timeManager.now();
+                endVisitDiscardOwnerSlotUseGuestAsReset(now);
+            }
+        }
     },
     // onDestroyCancelled
     []() {
@@ -354,20 +434,28 @@ static UICallbacks gameCallbacks = {
         uint32_t timestamp = timeManager.timeInfoToEpoch(year, month, day, hour, minute, 0);
         waitingForTimeSet = false;
 
-        if (loadedSaveTime > 0 && timestamp > loadedSaveTime) {
-            uint32_t offlineDuration = timestamp - loadedSaveTime;
+        // 离线补偿: 用上次关机前的设备时间 vs 用户确认的当前时间
+        uint32_t lastDeviceClock = deviceState.device_clock_epoch;
+
+        if (!reinitPetAfterInitialTimeConfirm && lastDeviceClock > 0 && timestamp > lastDeviceClock) {
+            uint32_t offlineDuration = timestamp - lastDeviceClock;
             Serial.printf("[Offline] Duration: %lu seconds (%.1f days)\n",
                           offlineDuration, (float)offlineDuration / 86400.0f);
-            // 先回到存档时刻, 再补算离线时长, 避免把“当前时间”重复推进两次
-            TimeInfo base = timeManager.epochToTimeInfo(loadedSaveTime);
+            // 先回到上次设备时间, 再补算离线时长
+            TimeInfo base = timeManager.epochToTimeInfo(lastDeviceClock);
             timeManager.setSimulatedTime(base.year, base.month, base.day, base.hour, base.minute);
+            // 访客宠物正常接受离线补偿 (主人冻结在槽内不受影响)
             skipTime(offlineDuration);
         } else {
             timeManager.setSimulatedTime(year, month, day, hour, minute);
-            Serial.println("[Offline] No compensation needed (no save time or time went backwards).");
+            if (!reinitPetAfterInitialTimeConfirm) {
+                Serial.println("[Offline] No compensation needed (no device clock or time went backwards).");
+            }
         }
 
-        finalizeImportAlignedSaveIfNeeded(timestamp);
+        // 更新设备时间
+        deviceState.device_clock_epoch = timeManager.now();
+        persistDeviceState();
 
         if (reinitPetAfterInitialTimeConfirm) {
             pet.initNew(timeManager.now());
@@ -375,6 +463,11 @@ static UICallbacks gameCallbacks = {
             reinitPetAfterInitialTimeConfirm = false;
             Serial.println("[Main] Reinitialized new pet with confirmed initial time.");
         }
+
+        // 设时后立即存档
+        uint32_t nowEpoch = timeManager.now();
+        SaveResult r = saveManager.save(pet, nowEpoch);
+        if (r == SAVE_OK) saveManager.markSaved(nowEpoch);
 
         menuController.switchContext(UI_IDLE);
         DisplayManager::showSystemReady();
@@ -418,7 +511,8 @@ void printStatus() {
         Serial.printf(" / %d (child)\n", CHILD_PERIOD_DAYS);
     else
         Serial.println(" (adult)");
-    Serial.printf("  Rounds:     %d\n", pet.rounds);
+    Serial.printf("  Rounds:     %d\n", deviceState.rounds);
+    Serial.printf("  Visiting:   %s\n", deviceState.is_visiting ? "YES" : "NO");
     Serial.printf("  Fed today:  %d / %d\n", pet.daily_feed.feed_count, DAILY_FEED_LIMIT);
     if (pet.last_poke_effect_time == 0) {
         Serial.println("  Poke:       available");
@@ -495,7 +589,7 @@ static void printStatusForSnapshot(const PetState& p, uint32_t epochNow) {
         Serial.printf(" / %d (child)\n", CHILD_PERIOD_DAYS);
     else
         Serial.println(" (adult)");
-    Serial.printf("  Rounds:     %d\n", p.rounds);
+    Serial.printf("  Rounds:     %d (device)\n", deviceState.rounds);
     Serial.printf("  Fed today:  %d / %d\n", p.daily_feed.feed_count, DAILY_FEED_LIMIT);
     if (p.last_poke_effect_time == 0) {
         Serial.println("  Poke:       available");
@@ -547,13 +641,13 @@ void printHelp() {
     Serial.println("  d              Advance 1 day");
     Serial.println("  save / load / erase");
     Serial.println("  s0 / s1 / s2  Show per-slot snapshot status");
-    Serial.println("  IMPORT_TIME_SETUP  After serial import: force time UI, no offline settle");
     Serial.println("  SAVE_SLOT_STATUS");
-    Serial.println("  SAVE_EXPORT <slot>");
+    Serial.println("  SAVE_EXPORT <slot>       Export full backup (pet + gallery)");
+    Serial.println("  SAVE_EXPORT_PET <slot>   Export pet only (for visit/trade)");
     Serial.println("  SAVE_IMPORT_BEGIN <slot>");
     Serial.println("  SAVE_IMPORT_DATA <hex>");
     Serial.println("  SAVE_IMPORT_COMMIT / SAVE_IMPORT_ABORT");
-    Serial.println("  reset          Destroy & reset");
+    Serial.println("  reset          Destroy & reset (ends visit if visiting)");
     Serial.println("  stime Y M D H m");
     Serial.println("  SET_TIME <epoch>  Set system time (unix timestamp)");
     Serial.println("  hp/sr/age <val>  Debug set");
@@ -563,12 +657,14 @@ void printHelp() {
     Serial.println("--- Gallery ---");
     Serial.println("  UNLOCK_ALL     Unlock all gallery forms");
     Serial.println("  RESET_GALLERY  Reset gallery (lock all)");
+    Serial.println("--- Device ---");
+    Serial.println("  devinfo        Show device state");
     Serial.println("--- Power ---");
     Serial.println("  bright <0-15>  Set screen brightness");
     Serial.println("  dim <0-15>     Set dim brightness");
     Serial.println("  dim_t <sec>    Set dim timeout");
     Serial.println("  off_t <sec>    Set off timeout");
-    Serial.println("  pwrsave        Save power config to NVS");
+    Serial.println("  pwrsave        Save power config to NVS (bright/dim/dim_t/off_t 已自动保存)");
     Serial.println("  pwrinfo        Print power config");
 #if ENABLE_SERIAL_INPUT_DEBUG
     Serial.println("--- Button Simulation ---");
@@ -605,9 +701,10 @@ void doDayEnd() {
         }
         feedingSystem.resetDaily(pet, timeManager.getDay());
         pet.age_days++;
-        SaveResult dR = saveManager.save(pet, timeManager.now());
+        uint32_t ts = timeManager.now();
+        SaveResult dR = saveManager.save(pet, ts);
         if (dR == SAVE_OK) {
-            saveManager.markSaved(now);
+            saveManager.markSaved(ts);
         } else {
             Serial.printf("[DayEnd] WARN: save failed (%d)\n", (int)dR);
         }
@@ -654,9 +751,10 @@ void doDayEnd() {
     Serial.printf("[DayEnd] Day %d done.\n", pet.age_days);
     DisplayManager::showDayEndComplete(pet.age_days);
 
-    SaveResult dR = saveManager.save(pet, timeManager.now());
+    uint32_t ts = timeManager.now();
+    SaveResult dR = saveManager.save(pet, ts);
     if (dR == SAVE_OK) {
-        saveManager.markSaved(now);
+        saveManager.markSaved(ts);
     } else {
         Serial.printf("[DayEnd] WARN: save failed (%d)\n", (int)dR);
     }
@@ -666,28 +764,74 @@ void doReset() {
     uint32_t now = timeManager.now();
     Form destroyedForm = pet.form;
     uint16_t prevAgeDays = pet.age_days;
-    uint16_t prevRounds = pet.rounds;
     DisplayManager::showDestroyExecuted(destroyedForm);
 
+    // === 串门结束逻辑 ===
+    if (deviceState.is_visiting) {
+        Serial.println("[Visit] Guest pet destroyed -> visit ended, restoring owner.");
+        // 从冻结槽恢复主人宠物
+        PetState ownerPet;
+        SaveResult lr = saveManager.loadFromSlot(deviceState.owner_frozen_slot, ownerPet);
+        if (lr != SAVE_OK) {
+            Serial.printf("[Visit] CRITICAL: Failed to load owner from slot %u (err=%d). "
+                          "Force-ending visit, starting fresh.\n",
+                          deviceState.owner_frozen_slot, (int)lr);
+            endVisitDiscardOwnerSlotUseGuestAsReset(now);
+            printStatus();
+            return;
+        } else {
+            // 计算冻结时长并对齐时间戳
+            uint32_t frozenDuration = visitOwnerFrozenElapsedSec(now);
+            realignOwnerTimestamps(ownerPet, frozenDuration);
+            // 串门结束: 完整重置当日投喂状态, 避免跨日计数/窗口不一致
+            ownerPet.daily_feed.reset(timeManager.getDay());
+
+            pet = ownerPet;
+
+            // 恢复活跃槽对
+            saveManager.setActivePairAfterVisitEnd(deviceState.owner_frozen_slot);
+
+            // 更新设备态
+            deviceState.is_visiting = false;
+            deviceState.owner_frozen_slot = 0xFF;
+            deviceState.visit_start_epoch = 0;
+            deviceState.device_clock_epoch = now;
+            persistDeviceState();
+
+            // 立即存档 (不触发离线补偿)
+            SaveResult r = saveManager.save(pet, now);
+            if (r == SAVE_OK) saveManager.markSaved(now);
+
+            Serial.printf("[Visit] Owner restored. Frozen duration: %lu sec\n", (unsigned long)frozenDuration);
+            printStatus();
+            return;
+        }
+    }
+
+    // === 正常 reset 逻辑 ===
+    uint16_t prevRounds = deviceState.rounds;
+
     // 指定轮次保底: round 329 触发 reset 后 (即 rounds=330) 必定进入 Nobu 路线
-    if (((prevRounds > 0) ? prevRounds : 1) == 329) {
+    if (prevRounds == 329) {
         Serial.println("[Reset] Forced Nobu: round 329 -> round 330");
         evolutionSystem.destroyToNobu(pet, now, prevAgeDays);
-        pet.rounds = 330;
+        deviceState.rounds = 330;
+        persistDeviceState();
         if (gallerySystem.unlockForm(pet.form)) {
             saveManager.saveGallery(gallerySystem.getData());
         }
         feedingSystem.resetDaily(pet, timeManager.getDay());
-        SaveResult r = saveManager.save(pet, timeManager.now());
-        if (r == SAVE_OK) saveManager.markSaved(now);
+        uint32_t ts = timeManager.now();
+        SaveResult r = saveManager.save(pet, ts);
+        if (r == SAVE_OK) saveManager.markSaved(ts);
         printStatus();
         return;
     }
 
-    // nobu 彩蛋判定 (与 executeDestroy 逻辑一致)
+    // nobu 彩蛋判定
     uint32_t roll = esp_random() % 1000;
     uint32_t threshold = NOBU_BASE_PERMILLE;
-    if (prevAgeDays == 5) {   // 仅第6天概率翻倍
+    if (prevAgeDays == 5) {
         threshold = NOBU_DAY6_PERMILLE;
     }
 
@@ -701,14 +845,18 @@ void doReset() {
         Serial.println("[Reset] 触发判定结果: 失败, 正常重置为 Lily");
         evolutionSystem.destroy(pet, now);
     }
-    pet.rounds = ((prevRounds > 0) ? prevRounds : 1) + 1;
+
+    deviceState.rounds = prevRounds + 1;
+    persistDeviceState();
+
     if (gallerySystem.unlockForm(pet.form)) {
         saveManager.saveGallery(gallerySystem.getData());
     }
 
     feedingSystem.resetDaily(pet, timeManager.getDay());
-    SaveResult r = saveManager.save(pet, timeManager.now());
-    if (r == SAVE_OK) saveManager.markSaved(now);
+    uint32_t ts = timeManager.now();
+    SaveResult r = saveManager.save(pet, ts);
+    if (r == SAVE_OK) saveManager.markSaved(ts);
     printStatus();
 }
 
@@ -834,17 +982,44 @@ void processCommand(const char* cmd) {
         return;
     }
 
+    // 导出仅运行态 (用于串门/交换宠物)
+    if (strncmp(cmd, "SAVE_EXPORT_PET ", 16) == 0) {
+        uint8_t slot = 0;
+        if (!parseSlotArg(cmd + 16, &slot)) {
+            Serial.println("[SaveExport] Usage: SAVE_EXPORT_PET <slot(0|1|2)>");
+            return;
+        }
+        SaveHeader hdr;
+        PetState state;
+        SaveResult r = saveManager.exportSlotRaw(slot, hdr, state);
+        if (r != SAVE_OK) {
+            Serial.printf("[SaveExport] FAILED (%d)\n", (int)r);
+            return;
+        }
+        uint8_t raw[SLOT_RAW_BASE_BYTES];
+        memcpy(raw, &hdr, sizeof(SaveHeader));
+        memcpy(raw + sizeof(SaveHeader), &state, sizeof(PetState));
+        Serial.printf("SAVE_EXPORT_BEGIN slot=%u bytes=%u\n", slot, (unsigned)SLOT_RAW_BASE_BYTES);
+        for (size_t off = 0; off < SLOT_RAW_BASE_BYTES; off += EXPORT_LINE_BYTES) {
+            size_t take = SLOT_RAW_BASE_BYTES - off;
+            if (take > EXPORT_LINE_BYTES) take = EXPORT_LINE_BYTES;
+            printHexLine(raw + off, take);
+        }
+        Serial.printf("SAVE_EXPORT_END slot=%u bytes=%u\n", slot, (unsigned)SLOT_RAW_BASE_BYTES);
+        return;
+    }
+
     if (strncmp(cmd, "SAVE_IMPORT_BEGIN ", 18) == 0) {
         uint8_t slot = 0;
         if (!parseSlotArg(cmd + 18, &slot)) {
             Serial.println("[SaveImport] Usage: SAVE_IMPORT_BEGIN <slot(0|1|2)>");
             return;
         }
-        // 新导入会话开始时清理历史对齐重试状态，避免旧任务串扰
-        _importAlignRetryPending = false;
-        _importAlignEpochPending = 0;
-        _importAlignLastRetryMs = 0;
-        _importAlignLastLogMs = 0;
+        // 串门期间禁止导入
+        if (deviceState.is_visiting) {
+            Serial.println("[SaveImport] REJECTED: import forbidden during visit.");
+            return;
+        }
         g_slotImport.active = true;
         g_slotImport.slot = slot;
         g_slotImport.received = 0;
@@ -892,6 +1067,26 @@ void processCommand(const char* cmd) {
             Serial.println("[SaveImport] No active session.");
             return;
         }
+
+        // 串门期间禁止任何导入
+        if (deviceState.is_visiting) {
+            Serial.println("[SaveImport] REJECTED: import forbidden during visit (串门).");
+            g_slotImport.active = false;
+            g_slotImport.received = 0;
+            g_slotImport.invalidCount = 0;
+            return;
+        }
+
+        // 若当前在等设时且有设备时间锚点, 立即对齐 TimeManager
+        // 必须在任何 timeManager.now() 调用之前完成, 否则后续写入的时间戳会是错误值
+        if (waitingForTimeSet && deviceState.device_clock_epoch > 0) {
+            TimeInfo anchor = timeManager.epochToTimeInfo(deviceState.device_clock_epoch);
+            timeManager.setSimulatedTime(anchor.year, anchor.month, anchor.day,
+                                         anchor.hour, anchor.minute);
+            Serial.printf("[SaveImport] Pre-aligned TimeManager to device_clock_epoch=%lu\n",
+                          (unsigned long)deviceState.device_clock_epoch);
+        }
+
         if (g_slotImport.received != SLOT_RAW_BASE_BYTES &&
             g_slotImport.received != SLOT_RAW_WITH_GALLERY_BYTES) {
             Serial.printf("[SaveImport] Incomplete payload: %u (expect %u or %u)\n",
@@ -906,6 +1101,63 @@ void processCommand(const char* cmd) {
         memcpy(&hdr, g_slotImport.raw, sizeof(SaveHeader));
         memcpy(&state, g_slotImport.raw + sizeof(SaveHeader), sizeof(PetState));
 
+        bool isFullBackup = (g_slotImport.received == SLOT_RAW_WITH_GALLERY_BYTES);
+
+        // 串门模式: 在写入导入数据之前, 先确定主人最新存档槽
+        // (importSlotRaw 会给导入槽分配最大 sequence, 之后就无法区分了)
+        // 只在活跃槽对内扫描, 与 load() 的选择逻辑一致 (seq大者优先, 并列取槽号小者)
+        uint8_t ownerSlotBeforeImport = 0;
+        if (!isFullBackup) {
+            uint32_t maxSeq = 0;
+            bool found = false;
+            uint8_t slotA = saveManager.getActiveSlotA();
+            uint8_t slotB = saveManager.getActiveSlotB();
+            uint8_t activeSlots[2] = { slotA, slotB };
+            for (uint8_t idx = 0; idx < 2; idx++) {
+                uint8_t i = activeSlots[idx];
+                SaveHeader sh;
+                SaveResult st;
+                if (saveManager.getSlotStatus(i, sh, st)) {
+                    // seq 更大, 或 seq 相同但槽号更小 (与 load 排序一致)
+                    if (!found || sh.sequence > maxSeq ||
+                        (sh.sequence == maxSeq && i < ownerSlotBeforeImport)) {
+                        maxSeq = sh.sequence;
+                        ownerSlotBeforeImport = i;
+                        found = true;
+                    }
+                }
+            }
+
+            // 活跃对内无有效存档, 无法确定主人槽
+            if (!found) {
+                Serial.println("[SaveImport] REJECTED: no valid owner save found in active slots.");
+                g_slotImport.active = false;
+                g_slotImport.received = 0;
+                g_slotImport.invalidCount = 0;
+                return;
+            }
+
+            // 若导入目标槽与主人槽相同, 拒绝导入 (会覆盖主人快照)
+            if (g_slotImport.slot == ownerSlotBeforeImport) {
+                Serial.printf("[SaveImport] REJECTED: target slot %u is owner's latest save. Use a different slot.\n",
+                              g_slotImport.slot);
+                g_slotImport.active = false;
+                g_slotImport.received = 0;
+                g_slotImport.invalidCount = 0;
+                return;
+            }
+        }
+
+        // 拒绝 save_time == 0 的包: 正常导出路径不可能产生, 视为损坏或不兼容数据
+        // 必须在 importSlotRaw 之前检查, 否则坏数据已写入 NVS 槽
+        if (hdr.save_time == 0) {
+            Serial.println("[SaveImport] REJECTED: save_time == 0 (corrupt or incompatible data)");
+            g_slotImport.active = false;
+            g_slotImport.received = 0;
+            g_slotImport.invalidCount = 0;
+            return;
+        }
+
         SaveResult ir = saveManager.importSlotRaw(g_slotImport.slot, hdr, state, true);
         if (ir != SAVE_OK) {
             Serial.printf("[SaveImport] FAILED (%d)\n", (int)ir);
@@ -915,51 +1167,158 @@ void processCommand(const char* cmd) {
             return;
         }
 
-        if (g_slotImport.received == SLOT_RAW_WITH_GALLERY_BYTES) {
+        if (isFullBackup) {
+            // === 完整备份恢复 ===
+            // 记录导入前活跃槽对, 失败时回滚
+            uint8_t prevActiveA = saveManager.getActiveSlotA();
+            uint8_t prevActiveB = saveManager.getActiveSlotB();
+
+            // 保留旧图鉴, 以便 loadFromSlot 失败时回滚
+            GalleryData prevGallery = gallerySystem.getData();
+
+            // 覆盖全局图鉴
             GalleryData g;
             memcpy(&g, g_slotImport.raw + SLOT_RAW_BASE_BYTES, sizeof(GalleryData));
             SaveResult gsr = saveManager.saveGallery(g);
             if (gsr != SAVE_OK) {
                 Serial.printf("[SaveImport] WARN: gallery import failed (%d)\n", (int)gsr);
             } else {
-                // 立即把导入图鉴绑定到该槽，避免“刚导入即导出”时读不到槽位图鉴快照
                 saveManager.syncGlobalGalleryToSlot(g_slotImport.slot);
                 gallerySystem.getData() = g;
-                Serial.println("[SaveImport] Gallery imported");
+                Serial.println("[SaveImport] Gallery restored from backup");
             }
+
+            // 导入完整备份: 不需要保留现有存档
+            saveManager.setActivePairForImportedBaseSlot(g_slotImport.slot);
+
+            // 加载宠物
+            SaveResult lr = saveManager.loadFromSlot(g_slotImport.slot, pet);
+            if (lr != SAVE_OK) {
+                Serial.printf("[SaveImport] FAILED: loadFromSlot failed (%d), rolling back\n", (int)lr);
+                saveManager.setActivePair(prevActiveA, prevActiveB);
+                // 回滚图鉴 (RAM + NVS + 槽位快照)
+                gallerySystem.getData() = prevGallery;
+                SaveResult gr = saveManager.saveGallery(prevGallery);
+                if (gr != SAVE_OK) {
+                    Serial.printf("[SaveImport] WARN: gallery rollback failed (%d)\n", (int)gr);
+                }
+                saveManager.syncGlobalGalleryToSlot(g_slotImport.slot);
+                g_slotImport.active = false;
+                g_slotImport.received = 0;
+                g_slotImport.invalidCount = 0;
+                return;
+            }
+
+            // 对齐备份宠物时间戳到本机时钟 (消除导出方与本机的时钟差)
+            {
+                uint32_t localNow = timeManager.now();
+                realignImportedTimestamps(pet, hdr.save_time, localNow, timeManager.getDay());
+            }
+
+            // rounds +1, 继承设备时间, 不触发离线补偿
+            deviceState.rounds++;
+            // 对齐设备时间锚点, 防止断电后误触发离线补偿
+            deviceState.device_clock_epoch = timeManager.now();
+            // 强制非串门态 (防 NVS/异常态残留; 正常路径下本也为 false)
+            deviceState.is_visiting = false;
+            deviceState.owner_frozen_slot = 0xFF;
+            deviceState.visit_start_epoch = 0;
+            persistDeviceState();
+
+            // 立即存档对齐到当前设备时间
+            uint32_t nowEpoch = timeManager.now();
+            SaveResult sr = saveManager.save(pet, nowEpoch);
+            if (sr == SAVE_OK) saveManager.markSaved(nowEpoch);
+
+            Serial.printf("[SaveImport] Full backup restored to slot=%u, rounds=%u\n",
+                          g_slotImport.slot, deviceState.rounds);
+
         } else {
-            Serial.println("[SaveImport] Legacy payload detected (no gallery block)");
-            // legacy 导入：保留原有图鉴进度，同时确保“当前导入形态”已解锁
+            // === 仅运行态导入 (串门) ===
+            // 保留旧图鉴, 以便 loadFromSlot 失败时回滚
+            GalleryData prevGallery = gallerySystem.getData();
+
+            // 保留本地图鉴, 仅解锁导入宠物的当前形态
             bool unlocked = gallerySystem.unlockForm(state.form);
             SaveResult gsr = saveManager.saveGallery(gallerySystem.getData());
             if (gsr != SAVE_OK) {
-                Serial.printf("[SaveImport] WARN: legacy gallery save failed (%d)\n", (int)gsr);
-            } else {
-                saveManager.syncGlobalGalleryToSlot(g_slotImport.slot);
-                if (unlocked) {
-                    const char* formName =
-                        (state.form < FORM_COUNT) ? FORM_NAMES[state.form] : "UNKNOWN_FORM";
-                    Serial.printf("[SaveImport] Legacy gallery kept; unlocked current form: %s\n",
-                                  formName);
-                } else {
-                    Serial.println("[SaveImport] Legacy gallery kept; current form already unlocked.");
-                }
+                Serial.printf("[SaveImport] WARN: gallery save failed (%d)\n", (int)gsr);
             }
+            if (unlocked) {
+                Serial.printf("[SaveImport] Unlocked imported form: %s\n",
+                              (state.form < FORM_COUNT) ? FORM_NAMES[state.form] : "UNKNOWN");
+            }
+
+            // 使用导入前确定的主人槽 (importSlotRaw 之前扫描的结果)
+            uint8_t ownerSlot = ownerSlotBeforeImport;
+
+            // 记录导入前活跃槽对, 失败时精确回滚
+            uint8_t prevActiveA = saveManager.getActiveSlotA();
+            uint8_t prevActiveB = saveManager.getActiveSlotB();
+
+            // 冻结主人槽, 其余两槽给访客
+            saveManager.setActivePairForVisit(ownerSlot);
+
+            // 加载访客宠物到内存
+            SaveResult lr = saveManager.loadFromSlot(g_slotImport.slot, pet);
+            if (lr != SAVE_OK) {
+                Serial.printf("[SaveImport] FAILED: loadFromSlot failed (%d), rolling back\n", (int)lr);
+                saveManager.setActivePair(prevActiveA, prevActiveB);
+                // 回滚图鉴
+                gallerySystem.getData() = prevGallery;
+                SaveResult gr = saveManager.saveGallery(prevGallery);
+                if (gr != SAVE_OK) {
+                    Serial.printf("[SaveImport] WARN: gallery rollback failed (%d)\n", (int)gr);
+                }
+                g_slotImport.active = false;
+                g_slotImport.received = 0;
+                g_slotImport.invalidCount = 0;
+                return;
+            }
+
+            // 对齐访客宠物时间戳到本机时钟 (消除导出方与本机的时钟差)
+            {
+                uint32_t localNow = timeManager.now();
+                realignImportedTimestamps(pet, hdr.save_time, localNow, timeManager.getDay());
+            }
+
+            // 设置串门状态
+            deviceState.is_visiting = true;
+            deviceState.owner_frozen_slot = ownerSlot;
+            deviceState.visit_start_epoch = timeManager.now();
+            deviceState.rounds++;
+            // 对齐设备时间锚点
+            deviceState.device_clock_epoch = timeManager.now();
+            persistDeviceState();
+
+            // 立即存档访客宠物到活跃槽
+            uint32_t nowEpoch = timeManager.now();
+            SaveResult sr = saveManager.save(pet, nowEpoch);
+            if (sr == SAVE_OK) saveManager.markSaved(nowEpoch);
+
+            Serial.printf("[SaveImport] Visit started: guest in slot=%u, owner frozen in slot=%u, rounds=%u\n",
+                          g_slotImport.slot, ownerSlot, deviceState.rounds);
         }
 
-        // 通用导入规则：导入槽必活跃；其余两槽中更旧者活跃；剩余一槽冻结保留
-        saveManager.setActivePairForImportedBaseSlot(g_slotImport.slot);
+        // 导入成功: 取消"新游戏初始化"标志, 避免后续设时回调覆盖刚导入的宠物
+        reinitPetAfterInitialTimeConfirm = false;
 
-        SaveResult lr = saveManager.loadFromSlot(g_slotImport.slot, pet);
-        if (lr != SAVE_OK) {
-            Serial.printf("[SaveImport] FAILED: loadFromSlot failed (%d)\n", (int)lr);
-            g_slotImport.active = false;
-            g_slotImport.received = 0;
-            g_slotImport.invalidCount = 0;
-            return;
+        // 若当前在等待设时状态, 导入成功后直接进入正常运行 (继承设备时间)
+        if (waitingForTimeSet) {
+            waitingForTimeSet = false;
+
+            // TimeManager 已在 COMMIT 入口处对齐 (device_clock_epoch > 0 时)
+            // 若 device_clock_epoch == 0 (全新设备), 以当前时钟为准写入设备态
+            if (deviceState.device_clock_epoch == 0) {
+                deviceState.device_clock_epoch = timeManager.now();
+                persistDeviceState();
+            }
+
+            menuController.switchContext(UI_IDLE);
+            DisplayManager::showSystemReady();
+            Serial.println("[SaveImport] Exited time-setup wait after successful import.");
         }
-        beginInitialTimeSetupAfterImportedSave();
-        Serial.printf("[SaveImport] OK slot=%u; now requiring time setup.\n", g_slotImport.slot);
+
         g_slotImport.active = false;
         g_slotImport.received = 0;
         g_slotImport.invalidCount = 0;
@@ -979,32 +1338,52 @@ void processCommand(const char* cmd) {
 
         if (waitingForTimeSet) {
             waitingForTimeSet = false;
-            // 计算离线时长并补偿
-            if (loadedSaveTime > 0 && timestamp > loadedSaveTime) {
-                uint32_t offlineDuration = timestamp - loadedSaveTime;
+
+            // 离线补偿: 用上次设备时间 vs 用户确认的当前时间
+            uint32_t lastDeviceClock = deviceState.device_clock_epoch;
+            if (!reinitPetAfterInitialTimeConfirm && lastDeviceClock > 0 && timestamp > lastDeviceClock) {
+                uint32_t offlineDuration = timestamp - lastDeviceClock;
                 Serial.printf("[Offline] Duration: %lu seconds (%.1f days)\n",
                               offlineDuration, (float)offlineDuration / 86400.0f);
-                TimeInfo base = timeManager.epochToTimeInfo(loadedSaveTime);
+                TimeInfo base = timeManager.epochToTimeInfo(lastDeviceClock);
                 timeManager.setSimulatedTime(base.year, base.month, base.day, base.hour, base.minute);
                 skipTime(offlineDuration);
             } else {
                 timeManager.setSimulatedTime(t.year, t.month, t.day, t.hour, t.minute);
-                Serial.println("[Offline] No compensation needed (no save time or time went backwards).");
+                if (!reinitPetAfterInitialTimeConfirm) {
+                    Serial.println("[Offline] No compensation needed.");
+                }
             }
-            finalizeImportAlignedSaveIfNeeded(timestamp);
+
+            // 更新设备时间
+            deviceState.device_clock_epoch = timeManager.now();
+            persistDeviceState();
+
             if (reinitPetAfterInitialTimeConfirm) {
                 pet.initNew(timeManager.now());
                 gallerySystem.unlockForm(pet.form);
                 reinitPetAfterInitialTimeConfirm = false;
                 Serial.println("[Main] Reinitialized new pet with confirmed initial time.");
             }
-            // 进入正常运行
+
+            // 设时后立即存档
+            uint32_t nowEpoch = timeManager.now();
+            SaveResult r = saveManager.save(pet, nowEpoch);
+            if (r == SAVE_OK) saveManager.markSaved(nowEpoch);
+
             menuController.switchContext(UI_IDLE);
             DisplayManager::showSystemReady();
             Serial.println("[Main] Time set, entering normal operation.");
             printStatus();
         } else {
+            if (deviceState.is_visiting) {
+                Serial.println("[Time] REJECTED: cannot change time during visit.");
+                return;
+            }
             timeManager.setSimulatedTime(t.year, t.month, t.day, t.hour, t.minute);
+            // 更新设备时间
+            deviceState.device_clock_epoch = timestamp;
+            persistDeviceState();
         }
         return;
     }
@@ -1047,14 +1426,6 @@ void processCommand(const char* cmd) {
         return;
     }
     if (strcmp(cmd, "h") == 0) { printHelp(); return; }
-    if (strcmp(cmd, "IMPORT_TIME_SETUP") == 0) {
-        if (waitingForTimeSet) {
-            Serial.println("[ImportClock] Already in time setup wait.");
-            return;
-        }
-        beginInitialTimeSetupAfterImportedSave();
-        return;
-    }
     if (strcmp(cmd, "fl") == 0) {
         Serial.println("--- Normal Food ---");
         for (uint8_t i = 0; i < FOOD_COUNT; i++)
@@ -1067,6 +1438,10 @@ void processCommand(const char* cmd) {
         return;
     }
     if (strcmp(cmd, "d") == 0) {
+        if (deviceState.is_visiting) {
+            Serial.println("[Time] REJECTED: cannot advance day during visit.");
+            return;
+        }
         doDayEnd();
         timeManager.advanceDays(1);
         DisplayManager::showToast("Day advanced", 1000);
@@ -1074,9 +1449,10 @@ void processCommand(const char* cmd) {
         return;
     }
     if (strcmp(cmd, "save") == 0) {
-        SaveResult r = saveManager.save(pet, timeManager.now());
+        uint32_t ts = timeManager.now();
+        SaveResult r = saveManager.save(pet, ts);
         if (r == SAVE_OK) {
-            saveManager.markSaved(timeManager.now());
+            saveManager.markSaved(ts);
             saveManager.saveGallery(gallerySystem.getData());
             Serial.println("[Save] OK");
             DisplayManager::showToast("Saved", 1000);
@@ -1107,11 +1483,11 @@ void processCommand(const char* cmd) {
     if (strcmp(cmd, "FORCE_NOBU") == 0) {
         uint32_t now = timeManager.now();
         uint16_t prevAgeDays = pet.age_days;
-        uint16_t prevRounds = pet.rounds;
         evolutionSystem.destroyToNobu(pet, now, prevAgeDays);
-        pet.rounds = ((prevRounds > 0) ? prevRounds : 1) + 1;
+        deviceState.rounds++;
+        persistDeviceState();
         feedingSystem.resetDaily(pet, timeManager.getDay());
-        saveManager.save(pet, timeManager.now());
+        saveManager.save(pet, now);
         saveManager.markSaved(now);
         Serial.println("[Debug] 已强制切换为 Nobu");
         printStatus();
@@ -1130,6 +1506,18 @@ void processCommand(const char* cmd) {
         gallerySystem.resetGallery();
         saveManager.saveGallery(gallerySystem.getData());
         Serial.println("[Debug] Gallery reset (all forms locked) and saved");
+        return;
+    }
+    if (strcmp(cmd, "devinfo") == 0) {
+        Serial.println("--- Device State ---");
+        Serial.printf("  Rounds:       %u\n", deviceState.rounds);
+        Serial.printf("  Visiting:     %s\n", deviceState.is_visiting ? "YES" : "NO");
+        Serial.printf("  Clock epoch:  %lu\n", (unsigned long)deviceState.device_clock_epoch);
+        if (deviceState.is_visiting) {
+            Serial.printf("  Owner slot:   %u\n", deviceState.owner_frozen_slot);
+            Serial.printf("  Visit start:  %lu\n", (unsigned long)deviceState.visit_start_epoch);
+        }
+        Serial.println("--------------------");
         return;
     }
     if (strcmp(cmd, "grad") == 0) {
@@ -1158,8 +1546,9 @@ void processCommand(const char* cmd) {
             if (eR.event == EVO_BLACK_RHONGOMYNIAD) {
                 DisplayManager::showEvolutionEvent(eR, pet.seriousness);
                 persistGalleryUnlockFromEvolution(eR);
-                saveManager.save(pet, timeManager.now());
-                saveManager.markSaved(timeManager.now());
+                uint32_t ts = timeManager.now();
+                saveManager.save(pet, ts);
+                saveManager.markSaved(ts);
             }
         }
         return;
@@ -1167,6 +1556,10 @@ void processCommand(const char* cmd) {
 
     // t <min>
     if (cmd[0] == 't' && cmd[1] == ' ') {
+        if (deviceState.is_visiting) {
+            Serial.println("[Time] REJECTED: cannot advance time during visit.");
+            return;
+        }
         int minutes = atoi(cmd + 2);
         if (minutes > 0) {
             const int MAX_SERIAL_ADVANCE_MIN = 10080;  // 7 days; avoids huge onIdleBatch loops
@@ -1196,6 +1589,10 @@ void processCommand(const char* cmd) {
 
     // stime Y M D H m
     if (strncmp(cmd, "stime ", 6) == 0) {
+        if (deviceState.is_visiting) {
+            Serial.println("[Time] REJECTED: cannot change time during visit.");
+            return;
+        }
         int y, mo, da, h, mi;
         if (sscanf(cmd + 6, "%d %d %d %d %d", &y, &mo, &da, &h, &mi) == 5) {
             timeManager.setSimulatedTime(y, mo, da, h, mi);
@@ -1387,68 +1784,85 @@ void setup() {
         if (saveManager.load(pet) == SAVE_OK) {
             Serial.println("[Main] Save loaded");
             DisplayManager::showSaveLoaded();
-            loadedSaveTime = saveManager.getLastSaveTime();
-            if (loadedSaveTime > 0) {
-                Serial.printf("[Main] Last save time: %lu\n", loadedSaveTime);
+
+            // 加载设备态
+            saveManager.loadDeviceState(deviceState);
+            // 自洽性: 有存档但无设备态时 rounds 不应为 0
+            if (deviceState.rounds == 0) {
+                deviceState.rounds = 1;
+                persistDeviceState();
             }
 
-            // 统一逻辑：
-            // - 首次开机(无存档) 与 断电类复位：都走时间设置 UI
-            // - deep sleep 唤醒：不要求设置时间，直接用 RTC 推进
-            // - 非断电类复位：沿用存档时间点继续运行
+            // 加载图鉴数据
+            saveManager.loadGallery(gallerySystem.getData());
+            // 确保当前形态已解锁
+            gallerySystem.unlockForm(pet.form);
+
+            // 时间恢复逻辑：
+            // - deep sleep 唤醒：用 RTC 推进, 触发离线补偿
+            // - 断电类复位 (POWERON/BROWNOUT)：需要用户设时 (设备态时间丢失)
+            // - 非断电类复位：沿用设备态时间继续运行
             if (resetReason == ESP_RST_DEEPSLEEP || wokeFromDeepSleep) {
                 uint64_t nowRtcUs = esp_rtc_get_time_us();
-                uint32_t resumedEpoch = (loadedSaveTime > 0) ? loadedSaveTime : timeManager.now();
+                uint32_t resumedEpoch = (deviceState.device_clock_epoch > 0)
+                    ? deviceState.device_clock_epoch : timeManager.now();
                 uint32_t sleptSec = 0;
                 if (rtc_us_at_sleep != 0 && epoch_at_sleep != 0 && nowRtcUs >= rtc_us_at_sleep) {
                     sleptSec = (uint32_t)((nowRtcUs - rtc_us_at_sleep) / 1000000ULL);
                     resumedEpoch = epoch_at_sleep + sleptSec;
                     Serial.printf("[Boot] Deep sleep elapsed: %lu sec\n", sleptSec);
                 } else {
-                    Serial.println("[Boot] Deep sleep markers missing; falling back to save/current time.");
+                    Serial.println("[Boot] Deep sleep markers missing; falling back to device clock.");
                 }
 
                 if (epoch_at_sleep != 0 && sleptSec > 0) {
                     TimeInfo base = timeManager.epochToTimeInfo(epoch_at_sleep);
                     timeManager.setSimulatedTime(base.year, base.month, base.day, base.hour, base.minute);
+                    // 访客与非串门一致走 skipTime；串门期间: 访客宠物正常接受离线补偿 主人仍在冻结槽内，不会被改写
                     skipTime(sleptSec);
                 } else {
                     TimeInfo t = timeManager.epochToTimeInfo(resumedEpoch);
                     timeManager.setSimulatedTime(t.year, t.month, t.day, t.hour, t.minute);
                 }
+
+                // 更新设备时间
+                deviceState.device_clock_epoch = timeManager.now();
+                persistDeviceState();
+
                 waitingForTimeSet = false;
                 powerManager.onWakeFromSleep();
                 Serial.println("[Boot] Resumed (deep sleep): RTC-based time restore.");
             } else if (resetReason == ESP_RST_POWERON || resetReason == ESP_RST_BROWNOUT) {
-                waitingForTimeSet = true;
-                reinitPetAfterInitialTimeConfirm = false;
-                Serial.println("[Main] Power-loss boot: please set current date/time via UI.");
+                if (deviceState.device_clock_epoch > 0) {
+                    // 有设备时间记录: 需要用户确认当前时间以计算离线时长
+                    waitingForTimeSet = true;
+                    reinitPetAfterInitialTimeConfirm = false;
+                    Serial.println("[Main] Power-loss boot: please set current date/time via UI.");
+                } else {
+                    // 全新设备, 无时间记录
+                    waitingForTimeSet = true;
+                    reinitPetAfterInitialTimeConfirm = false;
+                    Serial.println("[Main] No device clock: please set date/time.");
+                }
             } else {
-                if (loadedSaveTime > 0) {
-                    TimeInfo t = timeManager.epochToTimeInfo(loadedSaveTime);
+                // 非断电复位: 沿用设备态时间
+                if (deviceState.device_clock_epoch > 0) {
+                    TimeInfo t = timeManager.epochToTimeInfo(deviceState.device_clock_epoch);
                     timeManager.setSimulatedTime(t.year, t.month, t.day, t.hour, t.minute);
                 }
                 waitingForTimeSet = false;
                 reinitPetAfterInitialTimeConfirm = false;
-                Serial.println("[Boot] Non-power reset: restored to saved time.");
-            }
-            // 加载图鉴数据 (旧存档兼容: 无数据则初始化为空)
-            saveManager.loadGallery(gallerySystem.getData());
-            // 确保当前形态已解锁
-            gallerySystem.unlockForm(pet.form);
-
-            // 若上次是“导入后待设时”状态，重启后仍强制要求设时（避免串口开关导致状态丢失）
-            if (saveManager.isImportTimeSetupRequired()) {
-                waitingForTimeSet = true;
-                loadedSaveTime = 0;
-                reinitPetAfterInitialTimeConfirm = false;
-                _importFreshClockPersistPending = true;
-                Serial.println("[ImportClock] Pending import-time setup recovered from NVS.");
+                Serial.println("[Boot] Non-power reset: restored to device clock time.");
             }
         } else {
             Serial.println("[Main] Save corrupted, new game");
             DisplayManager::showSaveCorruptedNewGame();
             pet.initNew(timeManager.now());
+            saveManager.loadDeviceState(deviceState);
+            if (deviceState.rounds == 0) {
+                deviceState.rounds = 1;
+                persistDeviceState();
+            }
             waitingForTimeSet = true;
             reinitPetAfterInitialTimeConfirm = true;
         }
@@ -1456,20 +1870,25 @@ void setup() {
         Serial.println("[Main] New game");
         DisplayManager::showNewGame();
         pet.initNew(timeManager.now());
+        // 初始化设备态
+        deviceState.init();
+        deviceState.rounds = 1;
         // 新游戏: 解锁初始形态
         gallerySystem.unlockForm(pet.form);
         waitingForTimeSet = true;
         reinitPetAfterInitialTimeConfirm = true;
     }
 
-    menuController.init(&pet, &gameCallbacks);
+    menuController.init(&pet, &deviceState, &gameCallbacks);
     Serial.println("[Main] MenuController initialized");
 
     printHelp();
     printStatus();
 
     if (waitingForTimeSet) {
-        uint32_t baseEpoch = (loadedSaveTime > 0) ? loadedSaveTime : timeManager.timeInfoToEpoch(2026, 1, 1, 0, 0, 0);
+        uint32_t baseEpoch = (deviceState.device_clock_epoch > 0)
+            ? deviceState.device_clock_epoch
+            : timeManager.timeInfoToEpoch(2026, 1, 1, 0, 0, 0);
         menuController.startInitialTimeSetup(baseEpoch);
         Serial.println("\n[Main] Waiting for date/time setup (buttons)...\n> ");
     } else {
@@ -1503,7 +1922,7 @@ void enterDeepSleep() {
         }
         sleepSaveVerified = true;
         verifiedEpoch = nowEpoch;
-        saveManager.markSaved(timeManager.now());
+        saveManager.markSaved(nowEpoch);
         break;
     }
     if (!sleepSaveVerified) {
@@ -1511,6 +1930,10 @@ void enterDeepSleep() {
         Serial.flush();
         return;
     }
+
+    // 保存设备时间到设备态
+    deviceState.device_clock_epoch = verifiedEpoch;
+    persistDeviceState();
 
     Serial.println("[Power] Entering deep sleep...");
     Serial.flush();
@@ -1643,9 +2066,13 @@ void loop() {
 
     // Auto-save
     if (saveManager.shouldAutoSave(now)) {
-        SaveResult r = saveManager.save(pet, timeManager.now());
+        uint32_t ts = timeManager.now();
+        SaveResult r = saveManager.save(pet, ts);
         if (r == SAVE_OK) {
-            saveManager.markSaved(now);
+            saveManager.markSaved(ts);
+            // 同步设备时间 (与本次存档 save_time 同一采样)
+            deviceState.device_clock_epoch = ts;
+            persistDeviceState();
             DisplayManager::showAutoSave();
         } else {
             static uint32_t lastAutoSaveFailLogMs = 0;
@@ -1657,34 +2084,9 @@ void loop() {
         }
     }
 
-    // Import-time align background retry: 玩家无需再次设时，后台直到写入+校验成功
-    if (_importAlignRetryPending) {
-        uint32_t ms = millis();
-        if (ms - _importAlignLastRetryMs >= IMPORT_ALIGN_RETRY_INTERVAL_MS) {
-            _importAlignLastRetryMs = ms;
-            SaveResult rr = saveManager.save(pet, _importAlignEpochPending);
-            bool ok = (rr == SAVE_OK) && saveManager.verifyLatestSave(_importAlignEpochPending, pet);
-            if (ok) {
-                saveManager.markSaved(_importAlignEpochPending);
-                (void)saveManager.saveGallery(gallerySystem.getData());
-                saveManager.setImportTimeSetupRequired(false);
-                loadedSaveTime = _importAlignEpochPending;
-                _importAlignRetryPending = false;
-                _importAlignEpochPending = 0;
-                Serial.println("[ImportClock] Background align retry success.");
-            } else if (ms - _importAlignLastLogMs >= 10000) {
-                _importAlignLastLogMs = ms;
-                if (rr != SAVE_OK) {
-                    Serial.printf("[ImportClock] Background retry save failed (%d)\n", (int)rr);
-                } else {
-                    Serial.println("[ImportClock] Background retry verify failed");
-                }
-            }
-        }
-    }
-
     // 5. Display update (state machine + render)
     DisplayManager::updatePetSnapshot(pet);
+    DisplayManager::setDeviceInfo(deviceState.rounds, deviceState.is_visiting);
     DisplayManager::update(millis());
 
     delay(10);

@@ -20,8 +20,9 @@ static uint8_t daysInMonthForSetup(uint16_t year, uint8_t month) {
     return days[month - 1];
 }
 
-void MenuController::init(PetState* pet, UICallbacks* callbacks) {
+void MenuController::init(PetState* pet, DeviceState* devState, UICallbacks* callbacks) {
     _pet = pet;
+    _devState = devState;
     _callbacks = callbacks;
 
     _feed.active = false;
@@ -461,9 +462,10 @@ void MenuController::confirmFeed() {
         safeCallback(&UICallbacks::onEvolution, eR, _pet->seriousness);
     }
 
-    SaveResult sr = saveManager.save(*_pet, timeManager.now());
+    uint32_t ts = timeManager.now();
+    SaveResult sr = saveManager.save(*_pet, ts);
     if (sr == SAVE_OK) {
-        saveManager.markSaved(now);
+        saveManager.markSaved(ts);
     } else {
         Serial.printf("[MC] WARN: feed save failed (%d)\n", (int)sr);
     }
@@ -502,9 +504,10 @@ void MenuController::doPoke() {
     }
 
     // 关键：poke 会更新冷却与待机暂停时间戳，需立即持久化以避免断电后离线补偿失真
-    SaveResult sr = saveManager.save(*_pet, timeManager.now());
+    uint32_t ts = timeManager.now();
+    SaveResult sr = saveManager.save(*_pet, ts);
     if (sr == SAVE_OK) {
-        saveManager.markSaved(now);
+        saveManager.markSaved(ts);
     } else {
         Serial.printf("[MC] WARN: poke save failed (%d)\n", (int)sr);
     }
@@ -518,18 +521,31 @@ void MenuController::enterDestroyConfirm() {
 }
 
 void MenuController::executeDestroy() {
-    if (!_pet) return;
+    if (!_pet || !_devState) return;
 
     uint32_t now = timeManager.now();
     Form destroyedForm = _pet->form;
     uint16_t prevAgeDays = _pet->age_days;
-    uint16_t prevRounds = _pet->rounds;
+    uint16_t prevRounds = _devState->rounds;
+
+    // 串门结束逻辑由 main.cpp 的 doReset() 处理
+    // 这里只处理正常销毁 (button-triggered)
+    // 如果在串门中, 委托给 doReset() 通过 onDestroyExecuted 回调
+    if (_devState->is_visiting) {
+        // 串门中销毁: 通知外部处理
+        _feed.active = false;
+        _combo_pending = false;
+        _destroy.active = false;
+        safeCallback(&UICallbacks::onDestroyExecuted, destroyedForm);
+        switchContext(UI_IDLE);
+        return;
+    }
 
     // 指定轮次保底: round 329 触发 reset 后 (即 rounds=330) 必定进入 Nobu 路线
-    if (((prevRounds > 0) ? prevRounds : 1) == 329) {
+    if (prevRounds == 329) {
         Serial.println("[MC] Forced Nobu: round 329 -> round 330");
         evolutionSystem.destroyToNobu(*_pet, now, prevAgeDays);
-        _pet->rounds = 330;
+        _devState->rounds = 330;
     } else {
     // nobu 路线判定
     uint32_t roll = esp_random() % 1000;
@@ -549,7 +565,7 @@ void MenuController::executeDestroy() {
         Serial.println("[MC] 路线判定结果: 失败, 宠物进化为 Lily");
         evolutionSystem.destroy(*_pet, now);
     }
-    _pet->rounds = ((prevRounds > 0) ? prevRounds : 1) + 1;
+    _devState->rounds = prevRounds + 1;
     }
 
     feedingSystem.resetDaily(*_pet, timeManager.getDay());
@@ -566,9 +582,13 @@ void MenuController::executeDestroy() {
     _combo_pending = false;
     _destroy.active = false;
 
-    SaveResult sr = saveManager.save(*_pet, timeManager.now());
+    // 持久化设备态 (rounds 已更新)
+    saveManager.saveDeviceState(*_devState);
+
+    uint32_t ts = timeManager.now();
+    SaveResult sr = saveManager.save(*_pet, ts);
     if (sr == SAVE_OK) {
-        saveManager.markSaved(now);
+        saveManager.markSaved(ts);
     } else {
         Serial.printf("[MC] WARN: destroy save failed (%d)\n", (int)sr);
     }
