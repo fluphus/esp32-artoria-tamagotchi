@@ -70,6 +70,7 @@ struct FeedPickState {
     uint8_t     cursor;                 // 当前光标位置 (0-3)
     bool        selected[4];            // 各槽位是否被选中
     uint8_t     selected_count;         // 已选中数量
+    uint8_t     pick_order[3];          // 选择顺序 (按用户点击顺序记录槽位号)
     bool        active;                 // 是否处于选择状态
 };
 

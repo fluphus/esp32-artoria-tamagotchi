@@ -9,6 +9,7 @@
 #include "display_config.h"
 #include "display_model.h"
 #include "display_assets.h"
+#include "../presentation/presentation_types.h"
 
 // ============================================================================
 //  DisplayRenderer 类 (静态方法)
@@ -37,6 +38,9 @@ public:
     static void drawWaitTimeSet(const DisplayModel& model);
     static void drawGallery(const DisplayModel& model);
     static void drawToast(const DisplayModel& model);
+
+    // --- 新演出系统: 队列节点渲染 ---
+    static void drawAnimNode(const AnimNode& node, uint32_t elapsedMs, const DisplayModel& model);
 
     // --- 辅助绘制 ---
     // 绘制精灵 (如果资源存在则绘制, 否则画占位矩形)

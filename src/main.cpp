@@ -307,10 +307,8 @@ static UICallbacks gameCallbacks = {
             outcome.health_before, outcome.health_after, srAfter);
         if (outcome.combo_triggered)
             Serial.printf("[MC] *** COMBO: %s ***\n", COMBO_NAMES[outcome.combo]);
-        DisplayManager::showFeedResult(outcome, srAfter);
-        if (outcome.combo_triggered) {
-            DisplayManager::showFeedComboTriggered(outcome.combo);
-        }
+        // 注意: 不再调用 showFeedResult/showFeedComboTriggered
+        // 动画由 AnimationDirector::buildFeedSequence() 通过队列驱动
     },
     // onFeedCancel
     []() {
@@ -330,13 +328,17 @@ static UICallbacks gameCallbacks = {
     // onSpecialFoodSelect (new signature: id + full outcome)
     [](uint8_t id, const FeedOutcome& outcome) {
         Serial.printf("[MC] Special food selected: %d (%s)\n", id, SPECIAL_FOOD_TABLE[id].name);
-        DisplayManager::showSpecialFoodConfirm(id, outcome);
+        if (outcome.mapo_tofu_triggered)
+            Serial.printf("[MC] !! MAPO TOFU triggered (%d/%d) !!\n",
+                outcome.mapo_tofu_total, MAPO_TOFU_CURSE_THRESHOLD);
+        // 注意: 不再调用 showSpecialFoodConfirm()
+        // 动画由 AnimationDirector::buildComboEatingSequence() 通过队列驱动
     },
     // onPokeStart
     []() {
         Serial.println("[MC] Poke animation started");
-        DisplayManager::showPokeAnimation();
-        // Animation complete will be triggered by DisplayManager::update()
+        // 注意: 不再调用 showPokeAnimation()
+        // 动画由 AnimationDirector::buildPokeSequence() 通过队列驱动
     },
     // onPokeResult
     [](bool valueChanged, int16_t srBefore, int16_t srAfter) {
@@ -693,6 +695,11 @@ void doDayEnd() {
     Serial.println("[DayEnd] --- Processing ---");
     DisplayManager::showDayEndStart();
     uint32_t now = timeManager.now();
+
+    // 清除 poke 暂停: 日结算模拟的是"过去一天"的时间流逝,
+    // idle_paused_until 是相对于当前时间的未来时间戳,
+    // 如果不清除会导致整天的 SR 增长被错误阻塞
+    pet.idle_paused_until = 0;
 
     bool wasRhongo = pet.is_rhongomyniad;
     Form formBeforeDayEndIdle = pet.form;

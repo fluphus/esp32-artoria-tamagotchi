@@ -10,12 +10,16 @@
 #include "display_config.h"
 #include "display_model.h"
 #include "display_renderer.h"
+#include "asset_loader.h"
 #include "../core/game_state.h"
 #include "../pet/feeding.h"
 #include "../pet/seriousness.h"
 #include "../pet/evolution.h"
 #include "../config/food_table.h"
 #include "../input/input_map.h"
+#include "../presentation/presentation_types.h"
+#include "../presentation/animation_queue.h"
+#include "../presentation/idle_resolver.h"
 
 // ============================================================================
 //  页面枚举 (与 UIContext 对应, 但用于显示层独立管理)
@@ -172,6 +176,26 @@ public:
     // 获取 model (只读, 供外部查询)
     static const DisplayModel& getModel() { return _model; }
 
+    // ==== 新演出系统集成 ====
+
+    // 队列驱动的动画是否正在播放
+    static bool isQueuePlaying();
+
+    // 恢复待机 (队列清空后自动调用，也可手动调用)
+    static void returnToIdle();
+
+    // 获取当前待机动画 ID (供渲染层查询)
+    static IdleAnimId getCurrentIdleAnimId();
+
+    // 更新待机动画状态 (随机待机检测)
+    static void updateIdleAnimation(uint32_t nowMs);
+
+    // 队列完成回调 (内部使用)
+    static void onQueueComplete();
+
+    // 节点切换回调 (内部使用，同步渲染状态)
+    static void onNodeChange(const AnimNode* newNode, const AnimNode* prevNode);
+
 private:
     static DisplayPage  _currentPage;
     static AnimState    _currentAnim;
@@ -197,6 +221,12 @@ private:
 
     // Idle 页时钟：按模拟时间分钟推进刷新（不依赖 PetState 每帧变化）
     static uint32_t         _lastIdleClockEpochMin;
+
+    // --- 新演出系统状态 ---
+    static IdleAnimId       _currentIdleAnimId;     // 当前待机动画 ID
+    static uint32_t         _lastActivityMs;        // 最后一次非待机活动时间
+    static uint32_t         _idleAnimStartMs;       // 当前待机动画开始时间
+    static uint8_t          _idleFrameIndex;        // 待机动画当前帧
 
     // 内部: 标记脏
     static void markDirty();

@@ -7,6 +7,8 @@
 #include "../input/menu_controller.h"
 #include "../core/time_manager.h"
 #include "../pet/gallery.h"
+#include "../presentation/animation_director.h"
+#include "../presentation/pet_state_query.h"
 #include <Arduino.h>
 #include <string.h>
 
@@ -37,6 +39,12 @@ EvolutionResult  DisplayManager::_pendingEvolution         = {};
 int16_t          DisplayManager::_pendingEvolutionSrAfter  = 0;
 uint32_t         DisplayManager::_lastIdleClockEpochMin    = UINT32_MAX;
 
+// 新演出系统状态
+IdleAnimId       DisplayManager::_currentIdleAnimId        = IDLE_LILY_NORMAL;
+uint32_t         DisplayManager::_lastActivityMs           = 0;
+uint32_t         DisplayManager::_idleAnimStartMs          = 0;
+uint8_t          DisplayManager::_idleFrameIndex           = 0;
+
 // ============================================================================
 //  生命周期
 // ============================================================================
@@ -56,12 +64,37 @@ void DisplayManager::init() {
     _pendingEvolutionActive = false;
     _lastIdleClockEpochMin = UINT32_MAX;
 
+    // 新演出系统初始化
+    _currentIdleAnimId = IDLE_LILY_NORMAL;
+    _lastActivityMs = millis();
+    _idleAnimStartMs = millis();
+    _idleFrameIndex = 0;
+
+    animQueue.init();
+    animQueue.setOnQueueComplete(onQueueComplete);
+    animQueue.setOnNodeChange(onNodeChange);
+    AnimationDirector::init();
+    AssetLoader::init();
+
     DisplayRenderer::init();
     markDirty();
 }
 
 void DisplayManager::update(uint32_t nowMs) {
-    // --- 动画超时检测 ---
+    // --- 动画队列驱动 (新演出系统) ---
+    animQueue.update(nowMs);
+
+    // 队列播放中持续标记 dirty (驱动帧动画)
+    if (animQueue.isPlaying()) {
+        markDirty();
+    }
+
+    // --- 待机动画更新 (队列空闲时) ---
+    if (_currentPage == PAGE_IDLE && !animQueue.isPlaying()) {
+        updateIdleAnimation(nowMs);
+    }
+
+    // --- 旧动画超时检测 (兼容未迁移的动画) ---
     if (_currentAnim != ANIM_NONE && _animDurationMs > 0) {
         uint32_t elapsed = nowMs - _animStartedMs;
         if (elapsed >= _animDurationMs) {
@@ -153,6 +186,21 @@ void DisplayManager::update(uint32_t nowMs) {
 void DisplayManager::renderIfDirty() {
     if (!_dirty) return;
     _dirty = false;
+
+    // === 新演出系统: 队列播放中且当前页面为 IDLE 时渲染队列内容 ===
+    // 如果页面已被显式切换到非 IDLE (如 feed pick, status 等), 页面渲染优先
+    if (animQueue.isPlaying() && _currentPage == PAGE_IDLE) {
+        const AnimNode* node = animQueue.currentNode();
+        if (node) {
+            DisplayRenderer::drawAnimNode(*node, animQueue.currentElapsedMs(), _model);
+            // Toast 叠加层
+            if (_model.toast[0] != '\0') {
+                DisplayRenderer::drawToast(_model);
+            }
+            DisplayRenderer::present();
+            return;
+        }
+    }
 
     // 根据当前页面调用对应的 renderer
     switch (_currentPage) {
@@ -255,6 +303,8 @@ bool DisplayManager::isPageBlockingInput() {
     if (_currentPage == PAGE_DAY_END) return true;
     // Page hold 期间阻塞输入 (FeedResult hold, SpecialFood confirm hold)
     if (_pageHoldActive) return true;
+    // 动画队列播放中阻塞输入 (除非队列在等待用户输入)
+    if (animQueue.isPlaying() && !animQueue.isWaitingInput()) return true;
     return false;
 }
 
@@ -309,6 +359,17 @@ void DisplayManager::updatePetSnapshot(const PetState& pet) {
         timeManager.getFormattedDate(_model.dateStr, sizeof(_model.dateStr));
         _model.ageDay = pet.age_days + 1;
         _lastIdleClockEpochMin = epochMin;
+
+        // 刷新待机动画 ID (形态/HP/SR 变化时自动切换待机动画)
+        if (!animQueue.isPlaying()) {
+            IdleAnimId newId = IdleResolver::resolve(pet);
+            if (newId != _currentIdleAnimId) {
+                _currentIdleAnimId = newId;
+                _idleAnimStartMs = millis();
+                _idleFrameIndex = 0;
+            }
+        }
+
         if (_currentPage == PAGE_IDLE) {
             markDirty();
         }
@@ -694,5 +755,103 @@ void DisplayManager::showToast(const char* message, uint32_t durationMs) {
     strncpy(_model.toast, message, sizeof(_model.toast) - 1);
     _model.toast[sizeof(_model.toast) - 1] = '\0';
     _model.toastUntilMs = millis() + durationMs;
+    markDirty();
+}
+
+// ============================================================================
+//  新演出系统集成
+// ============================================================================
+
+bool DisplayManager::isQueuePlaying() {
+    return animQueue.isPlaying();
+}
+
+void DisplayManager::returnToIdle() {
+    _lastActivityMs = millis();
+    if (_currentPage != PAGE_IDLE) {
+        switchPage(PAGE_IDLE);
+    }
+    // 重新解析待机动画
+    _currentIdleAnimId = IdleResolver::resolve(_model.petSnapshot);
+    _idleAnimStartMs = millis();
+    _idleFrameIndex = 0;
+    markDirty();
+}
+
+IdleAnimId DisplayManager::getCurrentIdleAnimId() {
+    return _currentIdleAnimId;
+}
+
+void DisplayManager::updateIdleAnimation(uint32_t nowMs) {
+    // 更新待机动画帧索引
+    const AnimSequenceDescriptor* idleSeq = AssetLoader::getIdleAnim(_currentIdleAnimId);
+    if (idleSeq && idleSeq->frameCount > 0) {
+        uint32_t elapsed = nowMs - _idleAnimStartMs;
+        uint8_t newFrame = (uint8_t)((elapsed / idleSeq->frameDelayMs) % idleSeq->frameCount);
+        if (newFrame != _idleFrameIndex) {
+            _idleFrameIndex = newFrame;
+            markDirty();
+        }
+    }
+
+    // 随机待机动画检测
+    uint32_t idleDuration = nowMs - _lastActivityMs;
+    RandomIdleAnimId randomId = IdleResolver::resolveRandom(_model.petSnapshot, idleDuration);
+    if (randomId != RANDOM_IDLE_NONE) {
+        // 验证资源存在后才入队
+        const AnimSequenceDescriptor* randomSeq = AssetLoader::getRandomIdleAnim(randomId);
+        if (randomSeq && randomSeq->frames && randomSeq->frameCount > 0) {
+            AnimNode randomNode;
+            randomNode.type = NODE_PET_POKE;  // 复用 poke 类型 (全屏播放单个动画)
+            randomNode.form = _model.petSnapshot.form;
+            // 时长 = 帧数 × 帧延迟
+            randomNode.durationMs = randomSeq->frameCount * randomSeq->frameDelayMs;
+            animQueue.enqueue(randomNode);
+        }
+        _lastActivityMs = nowMs;  // 重置计时 (无论是否入队成功)
+    }
+
+    // 检查宠物状态变化是否需要切换待机动画
+    IdleAnimId newId = IdleResolver::resolve(_model.petSnapshot);
+    if (newId != _currentIdleAnimId) {
+        _currentIdleAnimId = newId;
+        _idleAnimStartMs = nowMs;
+        _idleFrameIndex = 0;
+        markDirty();
+    }
+}
+
+void DisplayManager::onQueueComplete() {
+    // 队列播放完毕，恢复待机
+    returnToIdle();
+    // 通知 MenuController 回到 IDLE 上下文
+    menuController.onAnimationComplete(UI_IDLE);
+}
+
+void DisplayManager::onNodeChange(const AnimNode* newNode, const AnimNode* prevNode) {
+    (void)prevNode;
+
+    if (!newNode) {
+        // 队列清空，由 onQueueComplete 处理
+        return;
+    }
+
+    // 根据新节点类型更新渲染状态
+    switch (newNode->type) {
+        case NODE_UI_FEED_CARDS:
+            // 弹出食物选择 UI - 通知 MenuController 进入选择上下文
+            menuController.onAnimationComplete(UI_FEED_DRAW);
+            break;
+
+        case NODE_UI_COMBO_SELECT:
+            // 弹出 combo 选择 UI
+            menuController.onAnimationComplete(UI_SPECIAL_FOOD);
+            break;
+
+        default:
+            break;
+    }
+
+    // 标记需要重绘
     markDirty();
 }

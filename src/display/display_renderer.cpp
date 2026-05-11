@@ -244,6 +244,71 @@ void DisplayRenderer::sendCommandWithData(uint8_t cmd, uint8_t data) {
 
 void DisplayRenderer::present() {}
 
+// --- 新演出系统: 队列节点渲染 ---
+
+static const char* nodeTypeName(AnimNodeType type) {
+    switch (type) {
+        case NODE_PET_EATING:       return "EATING";
+        case NODE_PET_REACTION:     return "REACTION";
+        case NODE_PET_POKE:         return "POKE";
+        case NODE_OVERLAY_SPRITE:   return "OVERLAY";
+        case NODE_COMBO_GIVER:      return "COMBO_GIVER";
+        case NODE_MAPO_TOFU:        return "MAPO_TOFU";
+        case NODE_EVOLUTION:        return "EVOLUTION";
+        case NODE_RHONGOMYNIAD:     return "RHONGOMYNIAD";
+        case NODE_BLACK_RHONGO:     return "BLACK_RHONGO";
+        case NODE_NOBU_EVENT:       return "NOBU_EVENT";
+        case NODE_UI_FEED_CARDS:    return "UI_FEED_CARDS";
+        case NODE_UI_COMBO_SELECT:  return "UI_COMBO_SELECT";
+        case NODE_WAIT_INPUT:       return "WAIT_INPUT";
+        case NODE_CALLBACK:         return "CALLBACK";
+        case NODE_DELAY:            return "DELAY";
+        default:                    return "UNKNOWN";
+    }
+}
+
+static const char* reactionName(ReactionType r) {
+    switch (r) {
+        case REACTION_LIKE:     return "LIKE";
+        case REACTION_DISLIKE:  return "DISLIKE";
+        case REACTION_UMU:      return "UMU";
+        case REACTION_EWW:      return "EWW";
+        case REACTION_SATISFY:  return "SATISFY";
+        case REACTION_ABHOR:    return "ABHOR";
+        case REACTION_PERFECT:  return "PERFECT";
+        default:                return "NONE";
+    }
+}
+
+void DisplayRenderer::drawAnimNode(const AnimNode& node, uint32_t elapsedMs, const DisplayModel& model) {
+    const char* formName = (node.form < FORM_COUNT) ? FORM_NAMES[node.form] : "?";
+    uint16_t duration = node.durationMs;
+    uint8_t frame = (duration > 0) ? (uint8_t)((elapsedMs / 250) % 2) : 0;  // simple 2-frame toggle
+
+    Serial.printf("[Anim] %s | %s | frame:%d | %ums/%ums",
+                  nodeTypeName(node.type), formName, frame, elapsedMs, duration);
+
+    switch (node.type) {
+        case NODE_PET_EATING:
+            Serial.printf(" | food:%s",
+                (node.foodId < FOOD_COUNT) ? FOOD_TABLE[node.foodId].name : "?");
+            break;
+        case NODE_PET_REACTION:
+            Serial.printf(" | %s", reactionName(node.reaction));
+            break;
+        case NODE_COMBO_GIVER:
+            Serial.printf(" | special:%s",
+                (node.specialFoodId < SFOOD_COUNT) ? SPECIAL_FOOD_TABLE[node.specialFoodId].name : "?");
+            break;
+        case NODE_MAPO_TOFU:
+            Serial.print(" | YOROKOBE SHOUNEN");
+            break;
+        default:
+            break;
+    }
+    Serial.println();
+}
+
 #endif // DISPLAY_BACKEND_SERIAL_PLACEHOLDER
 
 // ============================================================================
@@ -257,6 +322,9 @@ void DisplayRenderer::present() {}
 #include <Adafruit_SSD1351.h>
 #include <stdarg.h>
 #include "DisplayManager.h"
+#include "asset_loader.h"
+#include "../presentation/animation_queue.h"
+#include "../presentation/idle_resolver.h"
 
 enum {
     TL_DATUM = 0,
@@ -451,8 +519,24 @@ void DisplayRenderer::drawIdle(const DisplayModel& model) {
     const PetState& p = model.petSnapshot;
     tft.fillScreen(COLOR_BG);
 
-    // Form sprite or placeholder
-    drawSprite(IDLE_SPRITE_X, IDLE_SPRITE_Y, SPRITE_FORM[p.form], FORM_NAMES[p.form]);
+    // === 待机动画: 从二进制资源加载 ===
+    IdleAnimId idleId = DisplayManager::getCurrentIdleAnimId();
+    const AnimSequenceDescriptor* seq = AssetLoader::getIdleAnim(idleId);
+    if (seq && seq->frames && seq->frameCount > 0) {
+        // 计算当前帧
+        uint8_t frameIdx = (uint8_t)((millis() / seq->frameDelayMs) % seq->frameCount);
+        const AnimFrameDescriptor* frame = &seq->frames[frameIdx];
+        const uint16_t* pixels = AssetLoader::decodeFrame(frame);
+        if (pixels) {
+            tft.pushImage(IDLE_SPRITE_X, IDLE_SPRITE_Y, frame->width, frame->height, pixels);
+        } else {
+            // 解码失败 fallback
+            drawSprite(IDLE_SPRITE_X, IDLE_SPRITE_Y, SPRITE_FORM[p.form], FORM_NAMES[p.form]);
+        }
+    } else {
+        // 资源不存在 fallback: 原始占位矩形
+        drawSprite(IDLE_SPRITE_X, IDLE_SPRITE_Y, SPRITE_FORM[p.form], FORM_NAMES[p.form]);
+    }
 
     // HP bar
     tft.setTextColor(COLOR_TEXT, COLOR_BG);
@@ -730,12 +814,28 @@ void DisplayRenderer::drawSpecialFood(const DisplayModel& model) {
             tft.setTextColor(COLOR_TEXT, COLOR_BG);
         }
 
-        tft.setCursor(SFOOD_LABEL_X, iy + 4);
+        // Try to load special food icon from binary assets
+        const AnimSequenceDescriptor* iconSeq = AssetLoader::getComboGiverAnim(i);
+        // Use key2=1 entries (special_food_icons) via combo table lookup
+        // For now just show the icon from combo giver (first frame as static icon)
+        if (iconSeq && iconSeq->frames && iconSeq->frameCount > 0) {
+            const uint16_t* pixels = AssetLoader::decodeFrame(&iconSeq->frames[0]);
+            if (pixels) {
+                // Draw scaled: icon is 64x64, we need it smaller for the list
+                // Just draw at reduced area (top-left corner of item)
+                tft.pushImage(SFOOD_LABEL_X - 2, iy + 2, 
+                             iconSeq->frames[0].width > 20 ? 20 : iconSeq->frames[0].width,
+                             iconSeq->frames[0].height > 20 ? 20 : iconSeq->frames[0].height,
+                             pixels);
+            }
+        }
+
+        tft.setCursor(SFOOD_LABEL_X + 22, iy + 4);
         tft.print(SPECIAL_FOOD_TABLE[i].name);
 
         // Description on second line
         tft.setTextColor(COLOR_TEXT_DIM, isCursor ? (uint16_t)0x1082 : COLOR_BG);
-        tft.setCursor(SFOOD_LABEL_X, iy + 12);
+        tft.setCursor(SFOOD_LABEL_X + 22, iy + 12);
         tft.print(SPECIAL_FOOD_TABLE[i].description);
     }
 
@@ -1150,6 +1250,97 @@ void DisplayRenderer::drawGallery(const DisplayModel& model) {
     tft.setTextColor(COLOR_TEXT_DIM, COLOR_BG);
     tft.drawString(progBuf, SCREEN_WIDTH / 2, SCREEN_HEIGHT - 10);
 
+    tft.setTextDatum(TL_DATUM);
+}
+
+// --- 新演出系统: 队列节点渲染 (TFT 后端) ---
+void DisplayRenderer::drawAnimNode(const AnimNode& node, uint32_t elapsedMs, const DisplayModel& model) {
+    tft.fillScreen(COLOR_BG);
+    tft.setTextSize(1);
+
+    // 尝试从二进制资源加载对应动画帧
+    const AnimSequenceDescriptor* seq = nullptr;
+    switch (node.type) {
+        case NODE_PET_EATING:
+            seq = AssetLoader::getEatingAnim(node.form, node.foodId);
+            break;
+        case NODE_PET_REACTION:
+            seq = AssetLoader::getReactionAnim(node.form, node.reaction);
+            break;
+        case NODE_PET_POKE:
+            seq = AssetLoader::getPokeAnim(node.form);
+            break;
+        case NODE_COMBO_GIVER:
+            seq = AssetLoader::getComboGiverAnim(node.specialFoodId);
+            break;
+        case NODE_MAPO_TOFU:
+            seq = AssetLoader::getMapoTofuAnim(node.form);
+            break;
+        default:
+            break;
+    }
+
+    bool drewAsset = false;
+    if (seq && seq->frames && seq->frameCount > 0) {
+        uint8_t frameIdx = (uint8_t)((elapsedMs / seq->frameDelayMs) % seq->frameCount);
+        const AnimFrameDescriptor* frame = &seq->frames[frameIdx];
+        const uint16_t* pixels = AssetLoader::decodeFrame(frame);
+        if (pixels) {
+            // 居中绘制
+            int16_t x = (SCREEN_WIDTH - frame->width) / 2;
+            int16_t y = (SCREEN_HEIGHT - frame->height) / 2 - 8;
+            tft.pushImage(x, y, frame->width, frame->height, pixels);
+            drewAsset = true;
+        }
+    }
+
+    if (!drewAsset) {
+        // Fallback: 占位矩形 + 文字标识
+        tft.setTextDatum(TC_DATUM);
+        const char* formName = (node.form < FORM_COUNT) ? FORM_NAMES[node.form] : "?";
+        tft.setTextColor(COLOR_TEXT, COLOR_BG);
+        tft.drawString(formName, SCREEN_WIDTH / 2, 4);
+
+        bool blink = ((elapsedMs / 300) % 2) == 0;
+        uint16_t c = blink ? COLOR_TEXT : COLOR_TEXT_DIM;
+        tft.drawRect(24, 20, 80, 70, c);
+        tft.drawLine(24, 20, 104, 90, c);
+        tft.drawLine(104, 20, 24, 90, c);
+    }
+
+    // 底部: 节点类型 + 详情标签
+    tft.setTextDatum(TC_DATUM);
+    tft.setTextColor(COLOR_COMBO, COLOR_BG);
+    char label[32] = "";
+    switch (node.type) {
+        case NODE_PET_EATING:
+            if (node.foodId < FOOD_COUNT)
+                snprintf(label, sizeof(label), "EAT: %s", FOOD_TABLE[node.foodId].name);
+            else
+                snprintf(label, sizeof(label), "EATING");
+            break;
+        case NODE_PET_REACTION:
+            switch (node.reaction) {
+                case REACTION_LIKE:    snprintf(label, sizeof(label), "LIKE"); break;
+                case REACTION_DISLIKE: snprintf(label, sizeof(label), "DISLIKE"); break;
+                case REACTION_UMU:     snprintf(label, sizeof(label), "UMU"); break;
+                case REACTION_EWW:     snprintf(label, sizeof(label), "EWW"); break;
+                case REACTION_SATISFY: snprintf(label, sizeof(label), "SATISFY"); break;
+                case REACTION_ABHOR:   snprintf(label, sizeof(label), "ABHOR"); break;
+                case REACTION_PERFECT: snprintf(label, sizeof(label), "PERFECT"); break;
+                default:               snprintf(label, sizeof(label), "REACT"); break;
+            }
+            break;
+        case NODE_PET_POKE:    snprintf(label, sizeof(label), "POKE"); break;
+        case NODE_COMBO_GIVER:
+            if (node.specialFoodId < SFOOD_COUNT)
+                snprintf(label, sizeof(label), "COMBO: %s", SPECIAL_FOOD_TABLE[node.specialFoodId].name);
+            break;
+        case NODE_MAPO_TOFU:   snprintf(label, sizeof(label), "MAPO TOFU"); break;
+        case NODE_EVOLUTION:   snprintf(label, sizeof(label), "EVOLUTION"); break;
+        default:               snprintf(label, sizeof(label), "ANIM"); break;
+    }
+    tft.drawString(label, SCREEN_WIDTH / 2, SCREEN_HEIGHT - 10);
     tft.setTextDatum(TL_DATUM);
 }
 

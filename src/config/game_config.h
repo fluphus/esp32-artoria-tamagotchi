@@ -32,6 +32,7 @@
 
 // --- 食物喜好 ---
 #define DISLIKE_FOOD_SERIOUSNESS    3
+#define CHILD_LIKED_FOOD_SR_DELTA   (-5)    // 幼体组吃到喜欢的食物 SR 变化 (负数=减少)
 
 // --- 麻婆豆腐 ---
 #define MAPO_TOFU_CHANCE_PERCENT    10      // 彩蛋触发概率
@@ -51,10 +52,16 @@
 #define POKE_COOLDOWN_SEC           1800    // poke减少严肃值的冷却时间(秒), 30分钟
 #define POKE_IDLE_PAUSE_SEC         1800    // 戳一戳暂停严肃值增长30分钟
 
+// --- HP 分级阈值 (供演出层待机动画判定) ---
+#define HP_TIER_CRITICAL_MAX        15      // < 15 = 濒危
+#define HP_TIER_LOW_MAX             35      // < 35 = 低
+#define HP_TIER_MID_MAX             65      // < 65 = 中, >= 65 = 高
+
 // --- 狮子王 ---
 #define RHONGOMYNIAD_THRESHOLD      100
 #define RHONGOMYNIAD_SUSTAIN_SEC    172800
 #define RHONGOMYNIAD_SAFE_DROP      80
+#define LION_KING_SR_CRITICAL_MIN   80      // 狮子王计时中 SR >= 80 的特殊待机阈值
 
 // --- 存档 ---
 #define SAVE_NVS_NAMESPACE          "fate_tama"

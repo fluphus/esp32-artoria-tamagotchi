@@ -7,6 +7,7 @@
 #include "../config/food_table.h"
 #include "../display/DisplayManager.h"
 #include "../core/power_manager.h"
+#include "../presentation/animation_director.h"
 
 MenuController menuController;
 
@@ -95,9 +96,6 @@ void MenuController::onAnimationComplete(UIContext animContext) {
             break;
         case UI_EVOLUTION:
             // 进化动画完成, 回到主界面
-            // 注意: 如果当前已经是 UI_IDLE (例如 Nobu 进化路线中先切回了 IDLE),
-            // switchContext 会因为 oldCtx == newCtx 而跳过, 导致 PAGE_EVOLUTION 不被清除.
-            // 因此需要强制通知 UI 切换页面.
             if (inputManager.getContext() == UI_IDLE) {
                 safeCallback(&UICallbacks::onContextChange, UI_EVOLUTION, UI_IDLE);
             } else {
@@ -105,10 +103,16 @@ void MenuController::onAnimationComplete(UIContext animContext) {
             }
             break;
         case UI_SPECIAL_FOOD:
-            // combo 动画完成, 进入特殊食物选择
+            // combo 动画完成 (队列中的 NODE_UI_COMBO_SELECT 触发), 进入特殊食物选择
             if (_combo_pending) {
                 switchContext(UI_SPECIAL_FOOD);
                 safeCallback(&UICallbacks::onSpecialFoodShow, _sfood_count);
+            }
+            break;
+        case UI_IDLE:
+            // 队列播放完毕，回到待机
+            if (inputManager.getContext() != UI_IDLE) {
+                switchContext(UI_IDLE);
             }
             break;
         default:
@@ -304,10 +308,18 @@ void MenuController::handleSpecialFood(GameInput action) {
                     Serial.printf("[MC] WARN: special-food save failed (%d)\n", (int)sr);
                 }
 
-                // 通知 UI 显示特殊食物确认 (触发 ANIM_MAPO_TOFU 动画)
+                // 通知 UI 显示特殊食物确认 (保留旧回调用于日志)
                 safeCallback(&UICallbacks::onSpecialFoodSelect, _sfood_cursor, _last_feed_outcome);
 
+                // === 新演出系统: 构建 combo 进食动画 ===
+                AnimationDirector::buildComboEatingSequence(
+                    *_pet, _sfood_cursor, _last_feed_outcome);
+
+                // 恢复队列消费 (之前在 NODE_UI_COMBO_SELECT 处暂停)
+                animQueue.resumeFromInput();
+
                 if (eR.event != EVO_NONE) {
+                    AnimationDirector::buildEvolutionSequence(*_pet, eR);
                     safeCallback(&UICallbacks::onEvolution, eR, _pet->seriousness);
                 }
 
@@ -385,17 +397,26 @@ void MenuController::toggleFoodSlot() {
     if (slot >= FEED_DRAW_COUNT) return;
 
     if (_feed.selected[slot]) {
-        // 取消选取
+        // 取消选取 - 从 pick_order 中移除
         _feed.selected[slot] = false;
+        // 找到并移除该 slot，后面的前移
+        for (uint8_t i = 0; i < _feed.selected_count; i++) {
+            if (_feed.pick_order[i] == slot) {
+                for (uint8_t j = i; j < _feed.selected_count - 1; j++) {
+                    _feed.pick_order[j] = _feed.pick_order[j + 1];
+                }
+                break;
+            }
+        }
         _feed.selected_count--;
         safeCallback(&UICallbacks::onFeedSlotToggle, slot, false);
     } else {
         // 选取
         if (_feed.selected_count >= FEED_PICK_COUNT) {
-            // 已选满3个, 不能再选
             return;
         }
         _feed.selected[slot] = true;
+        _feed.pick_order[_feed.selected_count] = slot;  // 记录选择顺序
         _feed.selected_count++;
         safeCallback(&UICallbacks::onFeedSlotToggle, slot, true);
 
@@ -410,13 +431,10 @@ void MenuController::confirmFeed() {
     if (!_pet) return;
     if (_feed.selected_count < FEED_PICK_COUNT) return;
 
-    // 收集已选食物ID
+    // 收集已选食物ID (按用户选择顺序)
     uint8_t picked[3];
-    uint8_t pickIdx = 0;
-    for (uint8_t i = 0; i < FEED_DRAW_COUNT && pickIdx < FEED_PICK_COUNT; i++) {
-        if (_feed.selected[i]) {
-            picked[pickIdx++] = _feed.draw.food_ids[i];
-        }
+    for (uint8_t i = 0; i < FEED_PICK_COUNT; i++) {
+        picked[i] = _feed.draw.food_ids[_feed.pick_order[i]];
     }
 
     uint32_t now = timeManager.now();
@@ -445,8 +463,11 @@ void MenuController::confirmFeed() {
         Serial.printf("[MC] WARN: feed save failed (%d)\n", (int)sr);
     }
 
-    // 通知UI: 投喂完成 seriousness
+    // 通知UI: 投喂完成 (保留旧回调用于 Serial 日志等)
     safeCallback(&UICallbacks::onFeedConfirm, outcome, _pet->seriousness);
+
+    // === 新演出系统: 构建动画序列 ===
+    AnimationDirector::buildFeedSequence(*_pet, picked, outcome);
 
     // 处理组合
     if (outcome.combo_triggered) {
@@ -454,17 +475,15 @@ void MenuController::confirmFeed() {
         _combo_pending = true;
         _sfood_cursor = 0;
         _sfood_count = SFOOD_COUNT;
-
-        // 不直接切换到 UI_SPECIAL_FOOD, 让 combo 动画完成后通过 onAnimationComplete 切换
-        // 先切回 idle 状态 (这样不会被其他输入打断)
-        switchContext(UI_IDLE);
-    } else {
-        _feed.active = false;
-        switchContext(UI_IDLE);
     }
 
-    // 处理进化
+    // 切到 IDLE 上下文 (动画队列接管显示，输入被 isPageBlockingInput 阻塞)
+    _feed.active = false;
+    switchContext(UI_IDLE);
+
+    // 处理进化 (追加到队列尾部)
     if (eR.event != EVO_NONE) {
+        AnimationDirector::buildEvolutionSequence(*_pet, eR);
         safeCallback(&UICallbacks::onEvolution, eR, _pet->seriousness);
     }
 }
@@ -483,10 +502,12 @@ void MenuController::doPoke() {
 
     uint32_t now = timeManager.now();
 
-    // 切换到戳一下动画
-    // 动画完成后 DisplayManager 调用 onAnimationComplete(UI_POKE_ANIM)
+    // 切换到戳一下动画上下文
     switchContext(UI_POKE_ANIM);
     safeCallback(&UICallbacks::onPokeStart);
+
+    // === 新演出系统: 构建 poke 动画序列 ===
+    AnimationDirector::buildPokeSequence(*_pet);
 
     // 执行戳一下逻辑
     InteractResult sR = seriousnessSystem.onInteract(*_pet, INTERACT_POKE, now);
@@ -507,6 +528,7 @@ void MenuController::doPoke() {
     safeCallback(&UICallbacks::onPokeResult, valueChanged, sR.seriousness_before, sR.seriousness_after);
 
     if (eR.event != EVO_NONE) {
+        AnimationDirector::buildEvolutionSequence(*_pet, eR);
         safeCallback(&UICallbacks::onEvolution, eR, _pet->seriousness);
     }
 }

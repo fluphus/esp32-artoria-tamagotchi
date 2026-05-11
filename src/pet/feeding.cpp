@@ -147,7 +147,24 @@ FeedOutcome FeedingSystem::feed(PetState& pet, const uint8_t picked[3],
 
     pet.health = clampHealth(pet.health + totalHealthDelta + comboHealth);
 
-    // 严肃值: 食物喜好
+    // 严肃值: 幼体组喜欢的食物 SR 减少
+    // 幼体组 (Lily/Nobu) 根据投喂后 HP 决定偏好: HP>=50 白线, HP<50 黑线
+    // 每吃到一个"喜欢"的食物, SR -= CHILD_LIKED_FOOD_SR_DELTA (负数)
+    int16_t childLikedSR = 0;
+    if (pet.stage == STAGE_CHILD || pet.is_nobu) {
+        bool childPrefersBlack = (pet.health < 50);
+        for (uint8_t i = 0; i < FEED_PICK_COUNT; i++) {
+            if (picked[i] >= FOOD_COUNT) continue;
+            bool healthy = FOOD_TABLE[picked[i]].is_healthy;
+            bool isLiked = childPrefersBlack ? !healthy : healthy;
+            if (isLiked) childLikedSR += CHILD_LIKED_FOOD_SR_DELTA;
+        }
+        pet.seriousness += childLikedSR;
+        if (pet.seriousness > SERIOUSNESS_MAX) pet.seriousness = SERIOUSNESS_MAX;
+        if (pet.seriousness < SERIOUSNESS_MIN) pet.seriousness = SERIOUSNESS_MIN;
+    }
+
+    // 严肃值: 食物喜好 (成体 dislike 惩罚)
     int16_t dislikeSR = calcDislikeSeriousness(pet, picked);
     outcome.seriousness_from_dislike = dislikeSR;
     pet.seriousness += dislikeSR;
