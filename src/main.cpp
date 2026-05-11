@@ -211,6 +211,18 @@ static void persistCurrentFormUnlock() {
     }
 }
 
+// 白狮子王: updateRhongoTimer 在 tick/批量内先置位时 check() 常拿不到 EVO_RHONGOMYNIAD。调用方须保证
+// 本步刚由「非白狮终态」切入 is_rhongomyniad（与 !wasRhongo && pet.is_rhongomyniad 一致）。
+static void showWhiteRhongoJustEntered(Form formBefore, int16_t srAfter) {
+    EvolutionResult rh = {};
+    rh.event = EVO_RHONGOMYNIAD;
+    rh.form_before = formBefore;
+    rh.form_after = FORM_WHITE_LANCER_RHONGOMYNIAD;
+    rh.tier = seriousnessSystem.getTier(srAfter);
+    DisplayManager::showEvolutionEvent(rh, srAfter);
+    persistGalleryUnlockFromEvolution(rh);
+}
+
 void printStatus();
 void skipTime(uint32_t offlineSeconds);
 static void printStatusForSnapshot(const PetState& p, uint32_t epochNow);
@@ -683,6 +695,7 @@ void doDayEnd() {
     uint32_t now = timeManager.now();
 
     bool wasRhongo = pet.is_rhongomyniad;
+    Form formBeforeDayEndIdle = pet.form;
     IdleTickResult iR = seriousnessSystem.onIdleBatch(pet, 1440, now);
     bool rhongoTriggeredInDayEnd = (!wasRhongo && pet.is_rhongomyniad);
     if (iR.tier_changed) {
@@ -695,10 +708,10 @@ void doDayEnd() {
 
     if (pet.is_rhongomyniad || pet.is_black_rhongomyniad) {
         Serial.println("[DayEnd] Terminal state reached during idle.");
-        DisplayManager::showDayEndTerminalState();
         if (rhongoTriggeredInDayEnd) {
-            persistCurrentFormUnlock();
+            showWhiteRhongoJustEntered(formBeforeDayEndIdle, pet.seriousness);
         }
+        DisplayManager::showDayEndTerminalState();
         feedingSystem.resetDaily(pet, timeManager.getDay());
         pet.age_days++;
         uint32_t ts = timeManager.now();
@@ -896,6 +909,7 @@ void skipTime(uint32_t offlineSeconds) {
         }
 
         bool wasRhongo = pet.is_rhongomyniad;
+        Form formBeforeOfflineBatch = pet.form;
         uint32_t beforeEpoch = timeManager.now();
         Serial.printf("[Offline] Before batch: now=%lu pause_until=%lu last_poke_effect=%lu rem=%lu min\n",
                       beforeEpoch, pet.idle_paused_until, pet.last_poke_effect_time, remainingMinutes);
@@ -905,13 +919,15 @@ void skipTime(uint32_t offlineSeconds) {
         Serial.printf("[Offline] After batch: now=%lu SR %d->%d remainder=%u\n",
                       now, iR.seriousness_before, iR.seriousness_after, pet.idle_minute_remainder);
         if (!wasRhongo && pet.is_rhongomyniad) {
-            persistCurrentFormUnlock();
+            showWhiteRhongoJustEntered(formBeforeOfflineBatch, pet.seriousness);
         }
         if (iR.tier_changed) {
             Serial.printf("[Offline] Tier: %s -> %s\n", TIER_NAMES[iR.tier_before], TIER_NAMES[iR.tier_after]);
             EvolutionResult eR = evolutionSystem.check(pet, now);
             if (eR.event != EVO_NONE) {
                 Serial.printf("[Offline] Evo: %s -> %s\n", FORM_NAMES[eR.form_before], FORM_NAMES[eR.form_after]);
+                DisplayManager::showEvolutionEvent(eR, pet.seriousness);
+                persistGalleryUnlockFromEvolution(eR);
             }
         }
     }
@@ -1571,8 +1587,13 @@ void processCommand(const char* cmd) {
             timeManager.advanceMinutes(minutes);
             DisplayManager::showToast("Time advanced", 1000);
             uint32_t now = timeManager.now();
+            bool wasRhongoT = pet.is_rhongomyniad;
+            Form formBeforeT = pet.form;
             IdleTickResult iR = seriousnessSystem.onIdleBatch(pet, (uint32_t)minutes, now);
             Serial.printf("[Idle] SR: %d->%d (+%dm)\n", iR.seriousness_before, iR.seriousness_after, minutes);
+            if (!wasRhongoT && pet.is_rhongomyniad) {
+                showWhiteRhongoJustEntered(formBeforeT, pet.seriousness);
+            }
             if (iR.tier_changed) {
                 Serial.printf("[Idle] Tier: %s -> %s\n", TIER_NAMES[iR.tier_before], TIER_NAMES[iR.tier_after]);
                 DisplayManager::showIdleTierChange(iR.tier_before, iR.tier_after);
@@ -2039,10 +2060,11 @@ void loop() {
     // Idle tick: seriousness growth + rhongo timer
     if (timeManager.checkNewMinute()) {
         if (!pet.is_rhongomyniad && !pet.is_black_rhongomyniad) {
-            bool wasRhongo = pet.is_rhongomyniad;
+            Form formBeforeIdleTick = pet.form;
             IdleTickResult iR = seriousnessSystem.onIdleTick(pet, now);
-            if (!wasRhongo && pet.is_rhongomyniad) {
-                persistCurrentFormUnlock();
+            // 外层已排除白/黑狮终态，此处 is_rhongomyniad 为真即本分钟刚切入（等价 !wasRhongo && …）
+            if (pet.is_rhongomyniad) {
+                showWhiteRhongoJustEntered(formBeforeIdleTick, pet.seriousness);
             }
             if (iR.tier_changed) {
                 Serial.printf("[Idle] Tier: %s -> %s\n", TIER_NAMES[iR.tier_before], TIER_NAMES[iR.tier_after]);
