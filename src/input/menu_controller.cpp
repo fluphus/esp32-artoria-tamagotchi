@@ -289,22 +289,11 @@ void MenuController::handleSpecialFood(GameInput action) {
                 feedingSystem.applySpecialFood(*_pet, _last_feed_outcome, _sfood_cursor);
                 _combo_pending = false;
 
-                // 通知 UI 显示特殊食物确认 (触发 ANIM_MAPO_TOFU 动画)
-                safeCallback(&UICallbacks::onSpecialFoodSelect, _sfood_cursor, _last_feed_outcome);
-
-                // nobu 路线: 如果触发了麻婆豆腐为 Oda Nobunaga
+                EvolutionResult eR = {};
                 if (_pet->is_nobu && _last_feed_outcome.mapo_tofu_triggered) {
-                    EvolutionResult eR = evolutionSystem.checkNobuMapo(*_pet);
-                    if (eR.event != EVO_NONE) {
-                        safeCallback(&UICallbacks::onEvolution, eR, _pet->seriousness);
-                    }
-                }
-                // 普通路线: 如果触发了麻婆诅咒, 在 mapo 动画之后检查进化
-                else if (_last_feed_outcome.mapo_tofu_curse_activated) {
-                    EvolutionResult eR = evolutionSystem.checkMapoCurse(*_pet);
-                    if (eR.event != EVO_NONE) {
-                        safeCallback(&UICallbacks::onEvolution, eR, _pet->seriousness);
-                    }
+                    eR = evolutionSystem.checkNobuMapo(*_pet);
+                } else if (_last_feed_outcome.mapo_tofu_curse_activated) {
+                    eR = evolutionSystem.checkMapoCurse(*_pet);
                 }
 
                 uint32_t ts = timeManager.now();
@@ -314,6 +303,14 @@ void MenuController::handleSpecialFood(GameInput action) {
                 } else {
                     Serial.printf("[MC] WARN: special-food save failed (%d)\n", (int)sr);
                 }
+
+                // 通知 UI 显示特殊食物确认 (触发 ANIM_MAPO_TOFU 动画)
+                safeCallback(&UICallbacks::onSpecialFoodSelect, _sfood_cursor, _last_feed_outcome);
+
+                if (eR.event != EVO_NONE) {
+                    safeCallback(&UICallbacks::onEvolution, eR, _pet->seriousness);
+                }
+
                 switchContext(UI_IDLE);
             }
             break;
@@ -439,6 +436,15 @@ void MenuController::confirmFeed() {
     // 检查进化
     EvolutionResult eR = evolutionSystem.check(*_pet, now);
 
+    // 先落盘再播结果/动画：避免用户已看到投喂或进化反馈，断电后却仍加载旧档的割裂感
+    uint32_t ts = timeManager.now();
+    SaveResult sr = saveManager.save(*_pet, ts);
+    if (sr == SAVE_OK) {
+        saveManager.markSaved(ts);
+    } else {
+        Serial.printf("[MC] WARN: feed save failed (%d)\n", (int)sr);
+    }
+
     // 通知UI: 投喂完成 seriousness
     safeCallback(&UICallbacks::onFeedConfirm, outcome, _pet->seriousness);
 
@@ -460,14 +466,6 @@ void MenuController::confirmFeed() {
     // 处理进化
     if (eR.event != EVO_NONE) {
         safeCallback(&UICallbacks::onEvolution, eR, _pet->seriousness);
-    }
-
-    uint32_t ts = timeManager.now();
-    SaveResult sr = saveManager.save(*_pet, ts);
-    if (sr == SAVE_OK) {
-        saveManager.markSaved(ts);
-    } else {
-        Serial.printf("[MC] WARN: feed save failed (%d)\n", (int)sr);
     }
 }
 
@@ -494,22 +492,22 @@ void MenuController::doPoke() {
     InteractResult sR = seriousnessSystem.onInteract(*_pet, INTERACT_POKE, now);
     bool valueChanged = (sR.seriousness_before != sR.seriousness_after);
 
-    // 检查进化
+    // 检查进化（poke 路径设计上不触发进化，保留调用以与统一入口一致）
     EvolutionResult eR = evolutionSystem.check(*_pet, now);
 
-    safeCallback(&UICallbacks::onPokeResult, valueChanged, sR.seriousness_before, sR.seriousness_after);
-
-    if (eR.event != EVO_NONE) {
-        safeCallback(&UICallbacks::onEvolution, eR, _pet->seriousness);
-    }
-
-    // 关键：poke 会更新冷却与待机暂停时间戳，需立即持久化以避免断电后离线补偿失真
+    // 立刻落盘：冷却与待机暂停时间戳已写入内存，先于动画/UI，避免 poke 后立刻断电导致恢复时 SR 误增
     uint32_t ts = timeManager.now();
     SaveResult sr = saveManager.save(*_pet, ts);
     if (sr == SAVE_OK) {
         saveManager.markSaved(ts);
     } else {
         Serial.printf("[MC] WARN: poke save failed (%d)\n", (int)sr);
+    }
+
+    safeCallback(&UICallbacks::onPokeResult, valueChanged, sR.seriousness_before, sR.seriousness_after);
+
+    if (eR.event != EVO_NONE) {
+        safeCallback(&UICallbacks::onEvolution, eR, _pet->seriousness);
     }
 }
 
