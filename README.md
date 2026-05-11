@@ -10,15 +10,16 @@ Raise your own Artoria! Start your journey with Saber Lily and guide her growth.
 * **Time & Day Management:** Built-in internal clock to handle daily resets and penalties for missing meals.
 * **Persistent Storage:** 3-slot save system with checksum validation, serial full or pet-only export, slot import with full-restore or visit (trade-in) mode, device-bound rounds/clock state, and import-time safeguards.
 * **Interactive Actions:** Feed, Poke, and monitor status.
-* **Display:** SSD1351 128x128 65K Color OLED via TFT_eSPI, with Serial placeholder backend for headless testing.
+* **Presentation & Display:** Cutscenes for feed, combo chains, Poke, evolution, and similar flows are driven by an ordered animation queue; idle sprites are tiered from pet state (Health, Seriousness, etc.), including **Rhongomyniad**. SSD1351 128×128 65K color OLED via TFT_eSPI, plus a serial placeholder backend for headless testing. Optional: bake PNGs under `assets/` into flash-resident binaries (missing assets fall back to placeholders).
 
 ## 🚧 Current Project Status
 
-* Display: TFT_eSPI backend (SSD1351 128x128) and Serial placeholder backend both compile and run.
-* Input: 3-button physical input (L/M/R) with serial simulation (`btn l|m|r`, `btnl l|m|r`, `btnr l|m|r`).
-* Assets: Placeholder rectangles and text when real sprites are not present.
+* **Gameplay & systems:** Core loops are in place end-to-end—feeding and combos, special foods, Poke, evolution, day roll-up, save import/export, gallery, destroy confirmation, and related flows all run. Recent work routes on-screen cutscenes through a single “queue frames, play them on time” path; idle poses are picked from pet state and loaded from flash (placeholders remain when art is missing).
+* **Art & assets:** Final sprite / keyframe art is not all finished or wired in yet; the device still uses **stick figures** plus simple shapes and text so layouts and timing can be validated. Once assets are built through the `assets/` pipeline, the same logic can show real PNG sequences.
+* **Display:** TFT_eSPI backend (SSD1351 128×128) and Serial placeholder backend both compile and run.
+* **Input:** 3-button physical input (L/M/R) with serial simulation (`btn l|m|r`, `btnl l|m|r`, `btnr l|m|r`).
 
-## 🛠️ Hardware Requirement
+## 🛠️ Hardware Requirements
 
 * ESP32-S3 Development Board (N16R8 recommended)
 * SSD1351 1.5" 128x128 65K Color OLED (SPI)
@@ -44,6 +45,8 @@ pio run                    # Build (TFT_eSPI backend, default)
 pio run -t upload          # Upload to device
 pio device monitor         # Serial monitor (115200 baud)
 ```
+
+To regenerate embedded art from PNGs under `assets/`, run `python tools/convert_assets.py` in a Python environment with **Pillow** installed (naming and folders are documented in `assets/README.md`). The PlatformIO pre-build hook stays commented by default so builds do not break when PlatformIO’s bundled Python lacks Pillow; if you skip conversion, the firmware still runs using stick-figure / placeholder graphics.
 
 To switch to Serial placeholder backend (no screen), edit `src/display/display_config.h`:
 ```c
@@ -95,13 +98,13 @@ To switch to Serial placeholder backend (no screen), edit `src/display/display_c
 | M      | Confirm selection |
 
 ### Destroy Combo
-Hold all 3 buttons (L+M+R) for 5 seconds to trigger destroy confirmation (default cursor on NO).
+Hold all three buttons (L+M+R) for 5 seconds to trigger destroy confirmation (default cursor on NO).
 
-## Smoke Test Procedure (Serial / Button)
+## Smoke Test Procedure (Serial / Buttons)
 
 Use serial commands to simulate button presses. Connect at 115200 baud.
 
-### 1. Boot -> Idle
+### 1. Boot to Idle
 Power on. Boot screen displays for ~1.5s, then transitions to Idle automatically.
 
 ### 2. Status Panel
@@ -130,7 +133,7 @@ After selecting 3 foods (no combo triggered):
 - Input is blocked during this hold period
 - Page returns to idle automatically after hold expires
 
-### 5. Combo Feed Result -> Special Food
+### 5. Combo Feed Result to Special Food
 If a combo is triggered:
 - PAGE_FEED_RESULT shows with "COMBO" text
 - ANIM_COMBO plays (~1000ms)
@@ -155,7 +158,7 @@ btn r          # Poke animation plays (~500ms)
                # Returns to idle after animation completes
 ```
 
-### 8. Destroy (3-key combo)
+### 8. Destroy — Three-Button Hold
 ```
 btnl l         # Simulate long press L (in practice, hold all 3 for 5s)
                # For serial testing, use the 'reset' command instead
@@ -185,7 +188,7 @@ sr <val>       # Debug: set seriousness (0-100)
 age <val>      # Debug: set age days
 grad           # Debug: force child graduation
 mapo           # Debug: +1 mapo tofu count
-FORCE_NOBU     # Debug: force nobu route
+FORCE_NOBU     # Debug: force Nobbu / Oda Nobunaga branch
 UNLOCK_ALL     # Debug: unlock all gallery forms
 RESET_GALLERY  # Debug: reset gallery (lock all)
 SAVE_SLOT_STATUS   # Print slot0/1/2 status (seq/time/ver/size/crc)
