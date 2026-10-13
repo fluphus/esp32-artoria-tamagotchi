@@ -1,0 +1,111 @@
++ /usr/bin/python3 tests/host/check_original.py
+PASS original files outside repair scope unchanged; original v9 header, 8 target fixtures and current Xtensa ABI sizes/offsets verified
+EXIT 0 check_original
++ /usr/bin/python3 tests/host/run_save_repair.py
++ g++ -std=c++17 -Wall -Wextra -Werror -Wno-unused-parameter -Isrc tests/host/save_repair_test.cpp src/core/save_manager.cpp src/core/save_io.cpp src/core/save_workflows.cpp -o /tmp/original-save-repair-_jvtho5n/test
+PASS target v9 fixture read/export and invalid import refusal
+PASS startup/sidecars, unknown slot retention, frozen owner fallback
+NVS visiting=0 pending=1 owner_preserved=1
+SERIAL [SaveImport] FAILED stage=slot_cfg error=2; recovery required; saved records preserved, automatic writes blocked
+RESULT visit_import slot_cfg result=2 RAM_HP=50 visiting=0 reboot=Recovery
+NVS visiting=0 pending=1 owner_preserved=1
+SERIAL [SaveImport] FAILED stage=dev_state error=2; recovery required; saved records preserved, automatic writes blocked
+RESULT visit_import dev_state result=2 RAM_HP=50 visiting=0 reboot=Recovery
+NVS visiting=0 pending=1 owner_preserved=1
+SERIAL [SaveImport] FAILED stage=gallery error=2; recovery required; saved records preserved, automatic writes blocked
+RESULT visit_import gallery result=2 RAM_HP=50 visiting=0 reboot=Recovery
+NVS visiting=1 pending=1 owner_preserved=1
+SERIAL [SaveImport] FAILED stage=final_save error=2; recovery required; saved records preserved, automatic writes blocked
+RESULT visit_import final_header result=2 RAM_HP=50 visiting=0 reboot=Recovery
+NVS visiting=1 pending=1 owner_preserved=1
+SERIAL [SaveImport] FAILED stage=final_save error=2; recovery required; saved records preserved, automatic writes blocked
+RESULT visit_import final_data result=2 RAM_HP=50 visiting=0 reboot=Recovery
+NVS visiting=1 pending=1 owner_preserved=1
+SERIAL [SaveImport] FAILED stage=final_save error=2; recovery required; saved records preserved, automatic writes blocked
+RESULT visit_import final_gallery result=2 RAM_HP=50 visiting=0 reboot=Recovery
+NVS visiting=1 pending=1 owner_preserved=1
+SERIAL [SaveImport] FAILED stage=guard_complete error=2; recovery required; saved records preserved, automatic writes blocked
+RESULT visit_import guard_complete result=2 RAM_HP=50 visiting=0 reboot=Recovery
+NVS visiting=1 pending=0 owner_preserved=1
+RESULT visit_import success result=0 RAM_HP=73 visiting=1 reboot=Loaded
+POWER_CUT visit_import after=1:repair_guard reboot=Recovery
+POWER_CUT visit_import after=2:s1_hdr reboot=Recovery
+POWER_CUT visit_import after=3:s1_dat reboot=Recovery
+POWER_CUT visit_import after=4:gallery reboot=Recovery
+POWER_CUT visit_import after=5:slot_cfg reboot=Recovery
+POWER_CUT visit_import after=6:s1_gal reboot=Recovery
+POWER_CUT visit_import after=7:dev_state reboot=Recovery
+POWER_CUT visit_import after=8:s2_hdr reboot=Recovery
+POWER_CUT visit_import after=9:s2_dat reboot=Recovery
+POWER_CUT visit_import after=10:s2_gal reboot=Recovery
+POWER_CUT visit_import after=11:repair_guard reboot=Loaded
+NVS visiting=0 pending=1 owner_preserved=1
+SERIAL [SaveImport] FAILED stage=slot_cfg error=2; recovery required; saved records preserved, automatic writes blocked
+RESULT full_import slot_cfg result=2 RAM_HP=50 visiting=0 reboot=Recovery
+NVS visiting=0 pending=1 owner_preserved=1
+SERIAL [SaveImport] FAILED stage=dev_state error=2; recovery required; saved records preserved, automatic writes blocked
+RESULT full_import dev_state result=2 RAM_HP=50 visiting=0 reboot=Recovery
+NVS visiting=0 pending=1 owner_preserved=1
+SERIAL [SaveImport] FAILED stage=gallery error=2; recovery required; saved records preserved, automatic writes blocked
+RESULT full_import gallery result=2 RAM_HP=50 visiting=0 reboot=Recovery
+NVS visiting=0 pending=1 owner_preserved=1
+SERIAL [SaveImport] FAILED stage=final_save error=2; recovery required; saved records preserved, automatic writes blocked
+RESULT full_import final_header result=2 RAM_HP=50 visiting=0 reboot=Recovery
+NVS visiting=0 pending=1 owner_preserved=1
+SERIAL [SaveImport] FAILED stage=final_save error=2; recovery required; saved records preserved, automatic writes blocked
+RESULT full_import final_data result=2 RAM_HP=50 visiting=0 reboot=Recovery
+NVS visiting=0 pending=1 owner_preserved=1
+SERIAL [SaveImport] FAILED stage=final_save error=2; recovery required; saved records preserved, automatic writes blocked
+RESULT full_import final_gallery result=2 RAM_HP=50 visiting=0 reboot=Recovery
+NVS visiting=0 pending=1 owner_preserved=1
+SERIAL [SaveImport] FAILED stage=guard_complete error=2; recovery required; saved records preserved, automatic writes blocked
+RESULT full_import guard_complete result=2 RAM_HP=50 visiting=0 reboot=Recovery
+NVS visiting=0 pending=0 owner_preserved=1
+RESULT full_import success result=0 RAM_HP=73 visiting=0 reboot=Loaded
+POWER_CUT full_import after=1:repair_guard reboot=Recovery
+POWER_CUT full_import after=2:s1_hdr reboot=Recovery
+POWER_CUT full_import after=3:s1_dat reboot=Recovery
+POWER_CUT full_import after=4:gallery reboot=Recovery
+POWER_CUT full_import after=5:slot_cfg reboot=Recovery
+POWER_CUT full_import after=6:s1_gal reboot=Recovery
+POWER_CUT full_import after=7:dev_state reboot=Recovery
+POWER_CUT full_import after=8:s2_hdr reboot=Recovery
+POWER_CUT full_import after=9:s2_dat reboot=Recovery
+POWER_CUT full_import after=10:s2_gal reboot=Recovery
+POWER_CUT full_import after=11:repair_guard reboot=Loaded
+NVS visiting=1 pending=1 owner_preserved=1
+SERIAL [Visit] FAILED stage=slot_cfg error=2; recovery required; saved records preserved, automatic writes blocked
+RESULT restore slot_cfg result=2 RAM_HP=82 visiting=1 reboot=Recovery
+NVS visiting=1 pending=1 owner_preserved=1
+SERIAL [Visit] FAILED stage=dev_state error=2; recovery required; saved records preserved, automatic writes blocked
+RESULT restore dev_state result=2 RAM_HP=82 visiting=1 reboot=Recovery
+NVS visiting=0 pending=1 owner_preserved=1
+SERIAL [Visit] FAILED stage=final_save error=2; recovery required; saved records preserved, automatic writes blocked
+RESULT restore final_header result=2 RAM_HP=82 visiting=1 reboot=Recovery
+NVS visiting=0 pending=1 owner_preserved=1
+SERIAL [Visit] FAILED stage=final_save error=2; recovery required; saved records preserved, automatic writes blocked
+RESULT restore final_data result=2 RAM_HP=82 visiting=1 reboot=Recovery
+NVS visiting=0 pending=1 owner_preserved=1
+SERIAL [Visit] FAILED stage=final_save error=2; recovery required; saved records preserved, automatic writes blocked
+RESULT restore final_gallery result=2 RAM_HP=82 visiting=1 reboot=Recovery
+NVS visiting=0 pending=1 owner_preserved=1
+SERIAL [Visit] FAILED stage=guard_complete error=2; recovery required; saved records preserved, automatic writes blocked
+RESULT restore guard_complete result=2 RAM_HP=82 visiting=1 reboot=Recovery
+NVS visiting=0 pending=0 owner_preserved=0
+RESULT restore success result=0 RAM_HP=50 visiting=0 reboot=Loaded
+NVS visiting=1 pending=1 owner_preserved=1
+SERIAL [Visit] FAILED stage=owner_unavailable error=6; recovery required; saved records preserved, automatic writes blocked
+RESULT restore owner_bad result=6 RAM_HP=82 visiting=1 reboot=Recovery
+POWER_CUT restore after=1:repair_guard reboot=Recovery
+POWER_CUT restore after=2:slot_cfg reboot=Recovery
+POWER_CUT restore after=3:dev_state reboot=Recovery
+POWER_CUT restore after=4:s1_hdr reboot=Recovery
+POWER_CUT restore after=5:s1_dat reboot=Recovery
+POWER_CUT restore after=6:s1_gal reboot=Recovery
+POWER_CUT restore after=7:repair_guard reboot=Loaded
+PASS original production save repair: 1684 checks
+EXIT 0 run_save_repair
++ /usr/bin/python3 tests/host/run_behavior.py
+PASS 35 original/repaired production behavior traces match including all pet fields and RNG counts
+EXIT 0 run_behavior
+PASS original Artoria offline regression

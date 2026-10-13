@@ -3,13 +3,14 @@
 #include "save_manager.h"
 #include "../config/game_config.h"
 #include "../pet/gallery.h"
-#include <Arduino.h>
-#include <Preferences.h>
+#include "save_io.h"
 #include <string.h>
+#include <initializer_list>
+#include <inttypes.h>
 
 SaveManager saveManager;
 
-static Preferences prefs;
+static auto& prefs=saveio::storage;
 
 // NVS key 名称 (slot0/1/2)
 static const char* HDR_KEYS[SAVE_SLOT_COUNT]  = { "s0_hdr", "s1_hdr", "s2_hdr" };
@@ -20,6 +21,10 @@ static const char* ACTIVE_PAIR_KEY = "slot_cfg";
 static const char* DEVICE_STATE_KEY = "dev_state";
 
 static bool isPetStateSemanticallyValid(const PetState& pet) {
+    const auto* bytes=reinterpret_cast<const uint8_t*>(&pet);
+    for(const size_t offset:{offsetof(PetState,is_rhongomyniad),offsetof(PetState,white_fun_form_locked),
+        offsetof(PetState,is_black_rhongomyniad),offsetof(PetState,is_nobu),offsetof(PetState,is_oda_nobunaga)})
+        if(bytes[offset]>1)return false;
     if (pet.form >= FORM_COUNT) return false;
     if (pet.base_form >= FORM_COUNT) return false;
     if (pet.alignment > ALIGN_BLACK) return false;
@@ -43,24 +48,27 @@ const char* SaveManager::slotGalleryKey(uint8_t slot) {
 }
 
 SaveResult SaveManager::init() {
+    _initialized=false;_recoveryRequired=true;
     bool ok = prefs.begin(SAVE_NVS_NAMESPACE, false);
     if (!ok) {
-        Serial.println("[Save] ERROR: NVS init failed");
+        saveio::log.println("[Save] ERROR: NVS init failed");
         return SAVE_ERR_NVS_INIT;
     }
 
     _initialized = true;
+    _operation=false;_frozenOwner=0xff;
+    _recoveryRequired=hasSave();
+    DeviceState device;device.init();
+    if(loadDeviceState(device)==SAVE_OK&&device.is_visiting)_frozenOwner=device.owner_frozen_slot;
     _lastSaveTime = 0;
     _stickyWriteSlot = 0xFF;
     _activeSlotA = 0;
     _activeSlotB = 1;
 
-    Serial.println("[Save] NVS initialized (multi-slot)");
+    saveio::log.println("[Save] NVS initialized (multi-slot)");
 
     resyncSequenceFromNvs();
-    loadActivePairConfig();
-
-    return SAVE_OK;
+    return loadActivePairConfig();
 }
 
 void SaveManager::resyncSequenceFromNvs() {
@@ -71,25 +79,25 @@ void SaveManager::resyncSequenceFromNvs() {
         if (readSlotHeader(i, hdr)) {
             validCount++;
             if (hdr.sequence > maxSeq) maxSeq = hdr.sequence;
-            Serial.printf("[Save] 存档%u (slot %u): seq=%lu, ver=%d\n",
+            saveio::log.printf("[Save] 存档%u (slot %u): seq=%" PRIu32 ", ver=%d\n",
                           (unsigned)(i + 1), i, hdr.sequence, hdr.version);
         } else {
-            Serial.printf("[Save] 存档%u (slot %u): empty/invalid\n", (unsigned)(i + 1), i);
+            saveio::log.printf("[Save] 存档%u (slot %u): empty/invalid\n", (unsigned)(i + 1), i);
         }
     }
 
-    _nextSequence = maxSeq + 1;
+    _nextSequence = maxSeq == UINT32_MAX ? 0 : maxSeq + 1;
     if (validCount > 0)
-        Serial.printf("[Save] Found %d valid slot(s), next seq=%lu\n", validCount, _nextSequence);
+        saveio::log.printf("[Save] Found %d valid slot(s), next seq=%" PRIu32 "\n", validCount, _nextSequence);
     else
-        Serial.println("[Save] No existing save data");
+        saveio::log.println("[Save] No existing save data");
 }
 
 bool SaveManager::isSlotActive(uint8_t slot) const {
     return (slot == _activeSlotA) || (slot == _activeSlotB);
 }
 
-void SaveManager::loadActivePairConfig() {
+SaveResult SaveManager::loadActivePairConfig() {
     struct PairCfg {
         uint8_t a;
         uint8_t b;
@@ -106,12 +114,13 @@ void SaveManager::loadActivePairConfig() {
     } else {
         _activeSlotA = 0;
         _activeSlotB = 1;
-        persistActivePairConfig();
+        if(persistActivePairConfig()!=SAVE_OK){requireRecovery();return SAVE_ERR_WRITE;}
     }
-    Serial.printf("[Save] Active slots: %u,%u\n", _activeSlotA, _activeSlotB);
+    saveio::log.printf("[Save] Active slots: %u,%u\n", _activeSlotA, _activeSlotB);
+    return SAVE_OK;
 }
 
-void SaveManager::persistActivePairConfig() {
+SaveResult SaveManager::persistActivePairConfig() {
     struct PairCfg {
         uint8_t a;
         uint8_t b;
@@ -119,16 +128,19 @@ void SaveManager::persistActivePairConfig() {
     } cfg{};
     cfg.a = _activeSlotA;
     cfg.b = _activeSlotB;
-    prefs.putBytes(ACTIVE_PAIR_KEY, &cfg, sizeof(cfg));
+    return prefs.putBytes(ACTIVE_PAIR_KEY, &cfg, sizeof(cfg))==sizeof(cfg)?SAVE_OK:SAVE_ERR_WRITE;
 }
 
 SaveResult SaveManager::save(const PetState& pet, uint32_t saveTime) {
     if (!_initialized) return SAVE_ERR_NVS_INIT;
 
+    if(_recoveryRequired)return SAVE_ERR_CORRUPTED;
+    if(_nextSequence==0){saveio::log.println("[Save] Sequence exhausted; records preserved, export before explicit recovery.");return SAVE_ERR_WRITE;}
     uint8_t targetSlot = getSaveTargetSlot();
+    if(targetSlot>=SAVE_SLOT_COUNT)return SAVE_ERR_CORRUPTED;
 
     // 构建存档头
-    SaveHeader header;
+    SaveHeader header{};
     header.version = SAVE_DATA_VERSION;
     header.data_size = sizeof(PetState);
     header.checksum = calcChecksum((const uint8_t*)&pet, sizeof(PetState));
@@ -138,7 +150,7 @@ SaveResult SaveManager::save(const PetState& pet, uint32_t saveTime) {
     // 写入头
     size_t written = prefs.putBytes(slotHdrKey(targetSlot), &header, sizeof(SaveHeader));
     if (written != sizeof(SaveHeader)) {
-        Serial.printf("[Save] ERROR: Failed to write header to 存档%u (slot %u)\n",
+        saveio::log.printf("[Save] ERROR: Failed to write header to 存档%u (slot %u)\n",
                       (unsigned)(targetSlot + 1), targetSlot);
         return SAVE_ERR_WRITE;
     }
@@ -146,24 +158,25 @@ SaveResult SaveManager::save(const PetState& pet, uint32_t saveTime) {
     // 写入数据
     written = prefs.putBytes(slotDataKey(targetSlot), &pet, sizeof(PetState));
     if (written != sizeof(PetState)) {
-        Serial.printf("[Save] ERROR: Failed to write data to 存档%u (slot %u)\n",
+        saveio::log.printf("[Save] ERROR: Failed to write data to 存档%u (slot %u)\n",
                       (unsigned)(targetSlot + 1), targetSlot);
         return SAVE_ERR_WRITE;
     }
 
     if (!verifyWrittenSlot(targetSlot, saveTime, _nextSequence, pet)) {
         _stickyWriteSlot = targetSlot;
-        Serial.printf("[Save] VERIFY FAIL: 存档%u (slot %u) data invalid after write; "
-                      "will retry this slot until OK (seq still %lu)\n",
+        saveio::log.printf("[Save] VERIFY FAIL: 存档%u (slot %u) data invalid after write; "
+                      "will retry this slot until OK (seq still %" PRIu32 ")\n",
                       (unsigned)(targetSlot + 1), targetSlot, _nextSequence);
         return SAVE_ERR_VERIFY;
     }
 
     _stickyWriteSlot = 0xFF;
-    Serial.printf("[Save] 存档%u (slot %u) saved (seq=%lu, %d bytes, crc=0x%04X)\n",
+    saveio::log.printf("[Save] 存档%u (slot %u) saved (seq=%" PRIu32 ", %d bytes, crc=0x%04X)\n",
                   (unsigned)(targetSlot + 1), targetSlot, _nextSequence,
                   (int)sizeof(PetState), header.checksum);
-    syncGlobalGalleryToSlot(targetSlot);
+    const auto galleryResult=syncGlobalGalleryToSlot(targetSlot);
+    if(galleryResult!=SAVE_OK)return galleryResult;
 
     _nextSequence++;
     return SAVE_OK;
@@ -171,6 +184,17 @@ SaveResult SaveManager::save(const PetState& pet, uint32_t saveTime) {
 
 SaveResult SaveManager::load(PetState& pet) {
     if (!_initialized) return SAVE_ERR_NVS_INIT;
+
+    _recoveryRequired=true;
+    if(operationPending())return SAVE_ERR_CORRUPTED;
+    DeviceState device;device.init();
+    auto result=loadDeviceState(device);
+    if(result!=SAVE_OK&&result!=SAVE_ERR_NO_DATA)return result;
+    GalleryData gallery;gallery.init();result=loadGallery(gallery);
+    if(result!=SAVE_OK&&result!=SAVE_ERR_NO_DATA)return result;
+    _frozenOwner=device.is_visiting?device.owner_frozen_slot:0xff;
+    if(device.is_visiting&&setActivePairForVisit(_frozenOwner)!=SAVE_OK)return SAVE_ERR_WRITE;
+    const auto readable=[&](uint8_t slot){return slot!=_frozenOwner;};
 
     // 先全槽扫描：若“有且仅有一个有效槽”，固定从该槽加载并重建活动槽对
     struct FullSlotInfo {
@@ -182,7 +206,8 @@ SaveResult SaveManager::load(PetState& pet) {
     uint8_t onlyValidSlot = 0xFF;
     for (uint8_t i = 0; i < SAVE_SLOT_COUNT; i++) {
         SaveHeader h;
-        bool ok = readSlotHeader(i, h);
+        PetState candidate;
+        bool ok = readable(i) && readSlotHeader(i, h) && loadSlot(i,candidate)==SAVE_OK;
         full[i].valid = ok;
         if (ok) {
             full[i].hdr = h;
@@ -191,16 +216,17 @@ SaveResult SaveManager::load(PetState& pet) {
         }
     }
     if (validCount == 1 && onlyValidSlot < SAVE_SLOT_COUNT) {
-        Serial.printf("[Save] Only one valid slot found: %u. Forcing load from it.\n", onlyValidSlot);
-        setActivePairForImportedBaseSlot(onlyValidSlot);
+        saveio::log.printf("[Save] Only one valid slot found: %u. Forcing load from it.\n", onlyValidSlot);
+        if(!device.is_visiting&&setActivePairForImportedBaseSlot(onlyValidSlot)!=SAVE_OK)return SAVE_ERR_WRITE;
         SaveResult r = loadSlot(onlyValidSlot, pet);
         if (r == SAVE_OK) {
             _loadedSaveTime = full[onlyValidSlot].hdr.save_time;
-            Serial.printf("[Save] Loaded from only valid slot %u (save_time=%lu)\n",
+            saveio::log.printf("[Save] Loaded from only valid slot %u (save_time=%" PRIu32 ")\n",
                           onlyValidSlot, _loadedSaveTime);
+            _recoveryRequired=false;
             return SAVE_OK;
         }
-        Serial.printf("[Save] Only valid slot %u failed to load (err=%d)\n", onlyValidSlot, r);
+        saveio::log.printf("[Save] Only valid slot %u failed to load (err=%d)\n", onlyValidSlot, r);
         return r;
     }
 
@@ -215,7 +241,7 @@ SaveResult SaveManager::load(PetState& pet) {
     for (uint8_t i = 0; i < SAVE_SLOT_COUNT; i++) {
         SaveHeader hdr;
         slots[i].slot = i;
-        if (!isSlotActive(i)) {
+        if (!isSlotActive(i)||!readable(i)) {
             slots[i].valid = false;
             slots[i].sequence = 0;
             continue;
@@ -241,7 +267,7 @@ SaveResult SaveManager::load(PetState& pet) {
         if (!slots[i].valid) continue;
         anyActiveValid = true;
 
-        Serial.printf("[Save] Trying slot %d (seq=%lu)...\n", slots[i].slot, slots[i].sequence);
+        saveio::log.printf("[Save] Trying slot %d (seq=%" PRIu32 ")...\n", slots[i].slot, slots[i].sequence);
         SaveResult r = loadSlot(slots[i].slot, pet);
         if (r == SAVE_OK) {
             // 读取该槽的 save_time
@@ -249,14 +275,15 @@ SaveResult SaveManager::load(PetState& pet) {
             if (readSlotHeader(slots[i].slot, hdr)) {
                 _loadedSaveTime = hdr.save_time;
             }
-            Serial.printf("[Save] Loaded from slot %d (save_time=%lu)\n", slots[i].slot, _loadedSaveTime);
+            saveio::log.printf("[Save] Loaded from slot %d (save_time=%" PRIu32 ")\n", slots[i].slot, _loadedSaveTime);
+            _recoveryRequired=false;
             return SAVE_OK;
         }
-        Serial.printf("[Save] Slot %d failed (err=%d), trying next...\n", slots[i].slot, r);
+        saveio::log.printf("[Save] Slot %d failed (err=%d), trying next...\n", slots[i].slot, r);
     }
 
     // 兜底：活动槽对失败后，扫描全槽尝试恢复（配置异常/历史残留时避免“有档读不到”）
-    Serial.println("[Save] Active-pair load failed, trying full-slot fallback...");
+    saveio::log.println("[Save] Active-pair load failed, trying full-slot fallback...");
     struct FallbackInfo {
         uint8_t slot;
         uint32_t sequence;
@@ -266,7 +293,7 @@ SaveResult SaveManager::load(PetState& pet) {
     for (uint8_t i = 0; i < SAVE_SLOT_COUNT; i++) {
         SaveHeader hdr;
         fb[i].slot = i;
-        fb[i].valid = readSlotHeader(i, hdr);
+        fb[i].valid = readable(i) && readSlotHeader(i, hdr);
         fb[i].sequence = fb[i].valid ? hdr.sequence : 0;
     }
     for (uint8_t i = 0; i < SAVE_SLOT_COUNT - 1; i++) {
@@ -286,19 +313,20 @@ SaveResult SaveManager::load(PetState& pet) {
             if (readSlotHeader(fb[i].slot, hdr)) {
                 _loadedSaveTime = hdr.save_time;
             }
-            Serial.printf("[Save] Fallback loaded slot %d (seq=%lu, save_time=%lu)\n",
+            saveio::log.printf("[Save] Fallback loaded slot %d (seq=%" PRIu32 ", save_time=%" PRIu32 ")\n",
                           fb[i].slot, fb[i].sequence, _loadedSaveTime);
             // 自动修复活动槽对：以该槽为导入基槽套用通用规则
-            setActivePairForImportedBaseSlot(fb[i].slot);
+            if(!device.is_visiting&&setActivePairForImportedBaseSlot(fb[i].slot)!=SAVE_OK)return SAVE_ERR_WRITE;
+            _recoveryRequired=false;
             return SAVE_OK;
         }
-        Serial.printf("[Save] Fallback slot %d failed (err=%d)\n", fb[i].slot, r);
+        saveio::log.printf("[Save] Fallback slot %d failed (err=%d)\n", fb[i].slot, r);
     }
 
     if (!anyActiveValid) {
-        Serial.println("[Save] Active pair had no valid header, and fallback found no recoverable save");
+        saveio::log.println("[Save] Active pair had no valid header, and fallback found no recoverable save");
     } else {
-        Serial.println("[Save] Active pair had headers but all loads failed; fallback also failed");
+        saveio::log.println("[Save] Active pair had headers but all loads failed; fallback also failed");
     }
     return SAVE_ERR_NO_DATA;
 }
@@ -346,6 +374,9 @@ bool SaveManager::verifyLatestSave(uint32_t expectedEpoch, const PetState& pet) 
 }
 
 SaveResult SaveManager::loadSlot(uint8_t slot, PetState& pet) {
+    if(slot>=SAVE_SLOT_COUNT)return SAVE_ERR_CORRUPTED;
+    const char* newer[3]={"s0_v10","s1_v10","s2_v10"};
+    if(prefs.isKey(newer[slot]))return SAVE_ERR_VERSION_MISMATCH;
     SaveHeader header;
     const char* hdrKey = slotHdrKey(slot);
     const char* datKey = slotDataKey(slot);
@@ -369,11 +400,15 @@ SaveResult SaveManager::loadSlot(uint8_t slot, PetState& pet) {
     uint16_t checksum = calcChecksum((const uint8_t*)&temp, sizeof(PetState));
     if (checksum != header.checksum) return SAVE_ERR_CHECKSUM;
 
+    if(!isPetStateSemanticallyValid(temp))return SAVE_ERR_CORRUPTED;
+    GalleryData gallery;
+    if(prefs.isKey(slotGalleryKey(slot))&&!loadSlotGallery(slot,gallery))return SAVE_ERR_CORRUPTED;
     pet = temp;
     return SAVE_OK;
 }
 
 SaveResult SaveManager::loadFromSlot(uint8_t slot, PetState& pet) {
+    if(operationPending()&&!_operation)return SAVE_ERR_CORRUPTED;
     if (!_initialized) return SAVE_ERR_NVS_INIT;
     if (slot >= SAVE_SLOT_COUNT) return SAVE_ERR_CORRUPTED;
 
@@ -383,12 +418,15 @@ SaveResult SaveManager::loadFromSlot(uint8_t slot, PetState& pet) {
     SaveHeader hdr;
     if (!readSlotHeader(slot, hdr)) return SAVE_ERR_CORRUPTED;
     _loadedSaveTime = hdr.save_time;
+    _recoveryRequired=false;
     return SAVE_OK;
 }
 
 SaveResult SaveManager::exportSlotRaw(uint8_t slot, SaveHeader& hdr, PetState& pet) {
     if (!_initialized) return SAVE_ERR_NVS_INIT;
     if (slot >= SAVE_SLOT_COUNT) return SAVE_ERR_CORRUPTED;
+    PetState checked;const auto validation=loadSlot(slot,checked);
+    if(validation!=SAVE_OK)return validation;
 
     const char* hdrKey = slotHdrKey(slot);
     const char* datKey = slotDataKey(slot);
@@ -438,10 +476,7 @@ bool SaveManager::getSlotStatus(uint8_t slot, SaveHeader& hdr, SaveResult& statu
     return status == SAVE_OK;
 }
 
-SaveResult SaveManager::importSlotRaw(uint8_t slot, const SaveHeader& hdrIn, const PetState& pet, bool forceNewest) {
-    if (!_initialized) return SAVE_ERR_NVS_INIT;
-    if (slot >= SAVE_SLOT_COUNT) return SAVE_ERR_CORRUPTED;
-
+SaveResult SaveManager::validateImport(const SaveHeader& hdrIn,const PetState& pet) {
     if (hdrIn.version != SAVE_DATA_VERSION) return SAVE_ERR_VERSION_MISMATCH;
     if (hdrIn.data_size != sizeof(PetState)) return SAVE_ERR_CORRUPTED;
 
@@ -449,9 +484,21 @@ SaveResult SaveManager::importSlotRaw(uint8_t slot, const SaveHeader& hdrIn, con
     if (hdrIn.checksum != petSum) return SAVE_ERR_CHECKSUM;
     if (!isPetStateSemanticallyValid(pet)) return SAVE_ERR_CORRUPTED;
 
+    return SAVE_OK;
+}
+
+SaveResult SaveManager::importSlotRaw(uint8_t slot, const SaveHeader& hdrIn, const PetState& pet, bool forceNewest) {
+    if((operationPending()&&!_operation)||slot==_frozenOwner)return SAVE_ERR_CORRUPTED;
+    if (!_initialized) return SAVE_ERR_NVS_INIT;
+    if (slot >= SAVE_SLOT_COUNT) return SAVE_ERR_CORRUPTED;
+
+    const auto validation=validateImport(hdrIn,pet);
+    if(validation!=SAVE_OK)return validation;
+
     SaveHeader toWrite = hdrIn;
     if (forceNewest) {
         resyncSequenceFromNvs();
+        if(_nextSequence==0)return SAVE_ERR_WRITE;
         toWrite.sequence = _nextSequence;
     }
 
@@ -464,12 +511,13 @@ SaveResult SaveManager::importSlotRaw(uint8_t slot, const SaveHeader& hdrIn, con
 
     _stickyWriteSlot = 0xFF;
     resyncSequenceFromNvs();
+    _recoveryRequired=false;
     return SAVE_OK;
 }
 
-void SaveManager::setActivePairForImportedBaseSlot(uint8_t baseSlot) {
+SaveResult SaveManager::setActivePairForImportedBaseSlot(uint8_t baseSlot) {
     if (baseSlot >= SAVE_SLOT_COUNT) {
-        return;
+        return SAVE_ERR_CORRUPTED;
     }
 
     // 导入完整备份时：不需要保留现有存档
@@ -516,14 +564,16 @@ void SaveManager::setActivePairForImportedBaseSlot(uint8_t baseSlot) {
 
     _activeSlotA = baseSlot;
     _activeSlotB = older;
-    persistActivePairConfig();
-    Serial.printf("[Save] Active slots updated after import: %u,%u (frozen=%u)\n",
+    if(persistActivePairConfig()!=SAVE_OK){requireRecovery();return SAVE_ERR_WRITE;}
+    saveio::log.printf("[Save] Active slots updated after import: %u,%u (frozen=%u)\n",
                   _activeSlotA, _activeSlotB, frozen);
+    return SAVE_OK;
 }
 
-void SaveManager::setActivePairForVisit(uint8_t ownerFrozenSlot) {
-    if (ownerFrozenSlot >= SAVE_SLOT_COUNT) return;
+SaveResult SaveManager::setActivePairForVisit(uint8_t ownerFrozenSlot) {
+    if (ownerFrozenSlot >= SAVE_SLOT_COUNT) return SAVE_ERR_CORRUPTED;
 
+    _frozenOwner=ownerFrozenSlot;
     // 串门：冻结主人存档所在槽，其余两槽作为访客宠物的轮转写入槽
     uint8_t others[2];
     uint8_t k = 0;
@@ -533,33 +583,40 @@ void SaveManager::setActivePairForVisit(uint8_t ownerFrozenSlot) {
     }
     _activeSlotA = others[0];
     _activeSlotB = others[1];
-    persistActivePairConfig();
-    Serial.printf("[Save] Active slots for visit: %u,%u (owner frozen=%u)\n",
+    if(persistActivePairConfig()!=SAVE_OK){requireRecovery();return SAVE_ERR_WRITE;}
+    saveio::log.printf("[Save] Active slots for visit: %u,%u (owner frozen=%u)\n",
                   _activeSlotA, _activeSlotB, ownerFrozenSlot);
+    return SAVE_OK;
 }
 
-void SaveManager::setActivePairAfterVisitEnd(uint8_t ownerSlot) {
-    if (ownerSlot >= SAVE_SLOT_COUNT) return;
+SaveResult SaveManager::setActivePairAfterVisitEnd(uint8_t ownerSlot) {
+    if (ownerSlot >= SAVE_SLOT_COUNT) return SAVE_ERR_CORRUPTED;
 
     // 串门结束：主人存档槽回到活跃对，另一个槽选更旧的
-    setActivePairForImportedBaseSlot(ownerSlot);
-    Serial.printf("[Save] Active slots restored after visit end (owner=%u)\n", ownerSlot);
+    const auto result=setActivePairForImportedBaseSlot(ownerSlot);
+    if(result!=SAVE_OK)return result;
+    saveio::log.printf("[Save] Active slots restored after visit end (owner=%u)\n", ownerSlot);
+    return SAVE_OK;
 }
 
-void SaveManager::setActivePair(uint8_t a, uint8_t b) {
+SaveResult SaveManager::setActivePair(uint8_t a, uint8_t b) {
     if (a >= SAVE_SLOT_COUNT || b >= SAVE_SLOT_COUNT || a == b) {
-        Serial.printf("[Save] WARN: setActivePair(%u,%u) invalid, reloading from NVS\n", a, b);
+        saveio::log.printf("[Save] WARN: setActivePair(%u,%u) invalid, reloading from NVS\n", a, b);
         loadActivePairConfig();
-        return;
+        return SAVE_ERR_CORRUPTED;
     }
     _activeSlotA = a;
     _activeSlotB = b;
-    persistActivePairConfig();
-    Serial.printf("[Save] Active slots set directly: %u,%u\n", _activeSlotA, _activeSlotB);
+    if(persistActivePairConfig()!=SAVE_OK){requireRecovery();return SAVE_ERR_WRITE;}
+    saveio::log.printf("[Save] Active slots set directly: %u,%u\n", _activeSlotA, _activeSlotB);
+    return SAVE_OK;
 }
 
 bool SaveManager::readSlotHeader(uint8_t slot, SaveHeader& hdr) {
     if (!_initialized) return false;
+    if(slot>=SAVE_SLOT_COUNT)return false;
+    const char* newer[3]={"s0_v10","s1_v10","s2_v10"};
+    if(prefs.isKey(newer[slot]))return false;
     const char* hdrKey = slotHdrKey(slot);
     if (!prefs.isKey(hdrKey)) return false;
     size_t readLen = prefs.getBytes(hdrKey, &hdr, sizeof(SaveHeader));
@@ -570,34 +627,39 @@ bool SaveManager::readSlotHeader(uint8_t slot, SaveHeader& hdr) {
 }
 
 bool SaveManager::loadSlotGallery(uint8_t slot, GalleryData& gallery) {
-    if (!_initialized) return false;
-    if (slot >= SAVE_SLOT_COUNT) return false;
-
-    const char* key = slotGalleryKey(slot);
-    if (!prefs.isKey(key)) return false;
-    size_t readLen = prefs.getBytes(key, &gallery, sizeof(GalleryData));
-    return readLen == sizeof(GalleryData);
+    if(!_initialized||slot>=SAVE_SLOT_COUNT)return false;
+    uint8_t bytes[sizeof(GalleryData)];const auto key=slotGalleryKey(slot);
+    if(prefs.getBytesLength(key)!=sizeof(bytes)||prefs.getBytes(key,bytes,sizeof(bytes))!=sizeof(bytes))return false;
+    for(const auto value:bytes)if(value>1)return false;
+    memcpy(&gallery,bytes,sizeof(bytes));return true;
 }
 
-void SaveManager::syncGlobalGalleryToSlot(uint8_t slot) {
-    if (!_initialized) return;
-    if (slot >= SAVE_SLOT_COUNT) return;
+SaveResult SaveManager::syncGlobalGalleryToSlot(uint8_t slot) {
+    if(!_initialized)return SAVE_ERR_NVS_INIT;
+    if(_recoveryRequired||slot>=SAVE_SLOT_COUNT||slot==_frozenOwner)return SAVE_ERR_CORRUPTED;
+    GalleryData gallery;gallery.init();const auto result=loadGallery(gallery);
+    if(result!=SAVE_OK&&result!=SAVE_ERR_NO_DATA)return result;
+    return prefs.putBytes(slotGalleryKey(slot),&gallery,sizeof(gallery))==sizeof(gallery)?SAVE_OK:SAVE_ERR_WRITE;
+}
 
-    GalleryData g;
-    size_t readLen = prefs.getBytes(GALLERY_NVS_KEY, &g, sizeof(GalleryData));
-    if (readLen != sizeof(GalleryData)) {
-        g.init();
-    }
-    prefs.putBytes(slotGalleryKey(slot), &g, sizeof(GalleryData));
+bool SaveManager::slotHasData(uint8_t slot) const {
+    if(slot>=SAVE_SLOT_COUNT)return false;
+    const char* newer[3]={"s0_v10","s1_v10","s2_v10"};
+    return prefs.isKey(HDR_KEYS[slot])||prefs.isKey(DATA_KEYS[slot])||prefs.isKey(GALLERY_KEYS[slot])||prefs.isKey(newer[slot]);
+}
+bool SaveManager::slotWritable(uint8_t slot) {
+    if(slot>=SAVE_SLOT_COUNT||slot==_frozenOwner)return false;
+    if(!slotHasData(slot))return true;
+    PetState pet;return loadSlot(slot,pet)==SAVE_OK;
 }
 
 uint8_t SaveManager::getOldestSlot() {
     // 在当前活动槽对中找 sequence 最小的槽 (空槽 sequence=0, 优先被覆写)
     uint32_t minSeq = UINT32_MAX;
-    uint8_t oldest = 0;
+    uint8_t oldest = 0xff;
 
     for (uint8_t i = 0; i < SAVE_SLOT_COUNT; i++) {
-        if (!isSlotActive(i)) continue;
+        if (!isSlotActive(i)||!slotWritable(i)) continue;
         SaveHeader hdr;
         uint32_t seq = 0;
         if (readSlotHeader(i, hdr)) {
@@ -613,7 +675,7 @@ uint8_t SaveManager::getOldestSlot() {
 }
 
 uint8_t SaveManager::getSaveTargetSlot() {
-    if (_stickyWriteSlot < SAVE_SLOT_COUNT)
+    if (_stickyWriteSlot < SAVE_SLOT_COUNT&&slotWritable(_stickyWriteSlot))
         return _stickyWriteSlot;
     return getOldestSlot();
 }
@@ -637,30 +699,56 @@ bool SaveManager::verifyWrittenSlot(uint8_t slot, uint32_t saveTime, uint32_t ex
 }
 
 bool SaveManager::hasSave() {
-    if (!_initialized) return false;
-    for (uint8_t i = 0; i < SAVE_SLOT_COUNT; i++) {
-        SaveHeader hdr;
-        if (readSlotHeader(i, hdr)) return true;
-    }
-    return false;
+    if(!_initialized)return false;
+    for(uint8_t slot=0;slot<SAVE_SLOT_COUNT;++slot)if(slotHasData(slot))return true;
+    for(const auto key:{"gallery","dev_state","gallery_v10","device_v10"})if(prefs.isKey(key))return true;
+    return operationPending();
+}
+
+bool SaveManager::operationPending() const {
+    if(!prefs.isKey("repair_guard"))return false;
+    uint8_t bytes[6];
+    if(prefs.getBytesLength("repair_guard")!=sizeof(bytes)||prefs.getBytes("repair_guard",bytes,sizeof(bytes))!=sizeof(bytes))return true;
+    uint16_t sum=0xffff;
+    for(unsigned i=0;i<4;++i){sum^=bytes[i];sum=uint16_t((sum<<3)|(sum>>13));sum+=bytes[i];}
+    return bytes[0]!=0xa7||bytes[3]!=1||bytes[4]!=uint8_t(sum)||bytes[5]!=uint8_t(sum>>8)||bytes[1]!=0||bytes[2]!=255;
+}
+SaveResult SaveManager::beginOperation(uint8_t owner) {
+    if(!_initialized||operationPending()||(owner>=3&&owner!=255))return SAVE_ERR_CORRUPTED;
+    uint8_t bytes[6]={0xa7,1,owner,1,0,0};const auto sum=calcChecksum(bytes,4);
+    bytes[4]=uint8_t(sum);bytes[5]=uint8_t(sum>>8);
+    if(prefs.putBytes("repair_guard",bytes,sizeof(bytes))!=sizeof(bytes)){requireRecovery();return SAVE_ERR_WRITE;}
+    _frozenOwner=owner;_operation=true;_recoveryRequired=false;return SAVE_OK;
+}
+SaveResult SaveManager::finishOperation() {
+    if(!_operation)return SAVE_ERR_CORRUPTED;
+    DeviceState device;const auto result=loadDeviceState(device);
+    if(result!=SAVE_OK)return result;
+    uint8_t bytes[6]={0xa7,0,255,1,0,0};const auto sum=calcChecksum(bytes,4);
+    bytes[4]=uint8_t(sum);bytes[5]=uint8_t(sum>>8);
+    if(prefs.putBytes("repair_guard",bytes,sizeof(bytes))!=sizeof(bytes)){requireRecovery();return SAVE_ERR_WRITE;}
+    _operation=false;_frozenOwner=device.is_visiting?device.owner_frozen_slot:255;
+    return SAVE_OK;
 }
 
 SaveResult SaveManager::erase() {
     if (!_initialized) return SAVE_ERR_NVS_INIT;
 
-    prefs.clear();
+    if(!prefs.clear())return SAVE_ERR_WRITE;
+    _recoveryRequired=false;_operation=false;_frozenOwner=255;
     _nextSequence = 1;
     _stickyWriteSlot = 0xFF;
     _activeSlotA = 0;
     _activeSlotB = 1;
-    persistActivePairConfig();
-    Serial.println("[Save] All save data erased");
-    Serial.println("[Save] Active slots reset to default: 0,1");
+    if(persistActivePairConfig()!=SAVE_OK){requireRecovery();return SAVE_ERR_WRITE;}
+    saveio::log.println("[Save] All save data erased");
+    saveio::log.println("[Save] Active slots reset to default: 0,1");
 
     return SAVE_OK;
 }
 
 bool SaveManager::shouldAutoSave(uint32_t currentTime) {
+    if(!_initialized||_recoveryRequired||_nextSequence==0)return false;
     if (_lastSaveTime == 0) return true;
     return (currentTime - _lastSaveTime) >= AUTO_SAVE_INTERVAL_SEC;
 }
@@ -685,31 +773,27 @@ uint16_t SaveManager::calcChecksum(const uint8_t* data, size_t len) {
 
 SaveResult SaveManager::saveGallery(const GalleryData& gallery) {
     if (!_initialized) return SAVE_ERR_NVS_INIT;
+    if(_recoveryRequired)return SAVE_ERR_CORRUPTED;
 
     size_t written = prefs.putBytes(GALLERY_NVS_KEY, &gallery, sizeof(GalleryData));
     if (written != sizeof(GalleryData)) {
-        Serial.println("[Save] ERROR: Failed to write gallery data");
+        saveio::log.println("[Save] ERROR: Failed to write gallery data");
         return SAVE_ERR_WRITE;
     }
 
-    Serial.printf("[Save] Gallery saved (%d bytes, %d/%d unlocked)\n",
+    saveio::log.printf("[Save] Gallery saved (%d bytes, %d/%d unlocked)\n",
                   (int)sizeof(GalleryData), gallery.getUnlockedCount(), FORM_COUNT);
     return SAVE_OK;
 }
 
 SaveResult SaveManager::loadGallery(GalleryData& gallery) {
-    if (!_initialized) return SAVE_ERR_NVS_INIT;
-
-    size_t readLen = prefs.getBytes(GALLERY_NVS_KEY, &gallery, sizeof(GalleryData));
-    if (readLen != sizeof(GalleryData)) {
-        Serial.println("[Save] No gallery data found, initializing empty");
-        gallery.init();
-        return SAVE_ERR_NO_DATA;
-    }
-
-    Serial.printf("[Save] Gallery loaded (%d/%d unlocked)\n",
-                  gallery.getUnlockedCount(), FORM_COUNT);
-    return SAVE_OK;
+    if(!_initialized)return SAVE_ERR_NVS_INIT;
+    if(prefs.isKey("gallery_v10"))return SAVE_ERR_VERSION_MISMATCH;
+    if(!prefs.isKey(GALLERY_NVS_KEY)){gallery.init();return SAVE_ERR_NO_DATA;}
+    uint8_t bytes[sizeof(GalleryData)];
+    if(prefs.getBytesLength(GALLERY_NVS_KEY)!=sizeof(bytes)||prefs.getBytes(GALLERY_NVS_KEY,bytes,sizeof(bytes))!=sizeof(bytes))return SAVE_ERR_CORRUPTED;
+    for(const auto value:bytes)if(value>1)return SAVE_ERR_CORRUPTED;
+    memcpy(&gallery,bytes,sizeof(bytes));return SAVE_OK;
 }
 
 // ============================================================================
@@ -718,29 +802,27 @@ SaveResult SaveManager::loadGallery(GalleryData& gallery) {
 
 SaveResult SaveManager::saveDeviceState(const DeviceState& ds) {
     if (!_initialized) return SAVE_ERR_NVS_INIT;
+    if(_recoveryRequired)return SAVE_ERR_CORRUPTED;
 
     size_t written = prefs.putBytes(DEVICE_STATE_KEY, &ds, sizeof(DeviceState));
     if (written != sizeof(DeviceState)) {
-        Serial.println("[Save] ERROR: Failed to write device state");
+        saveio::log.println("[Save] ERROR: Failed to write device state");
         return SAVE_ERR_WRITE;
     }
 
-    Serial.printf("[Save] DeviceState saved (rounds=%u, visiting=%d, clock=%lu)\n",
-                  ds.rounds, ds.is_visiting, (unsigned long)ds.device_clock_epoch);
+    saveio::log.printf("[Save] DeviceState saved (rounds=%u, visiting=%d, clock=%" PRIu32 ")\n",
+                  ds.rounds, ds.is_visiting, ds.device_clock_epoch);
     return SAVE_OK;
 }
 
 SaveResult SaveManager::loadDeviceState(DeviceState& ds) {
-    if (!_initialized) return SAVE_ERR_NVS_INIT;
-
-    size_t readLen = prefs.getBytes(DEVICE_STATE_KEY, &ds, sizeof(DeviceState));
-    if (readLen != sizeof(DeviceState)) {
-        Serial.println("[Save] No device state found, initializing");
-        ds.init();
-        return SAVE_ERR_NO_DATA;
-    }
-
-    Serial.printf("[Save] DeviceState loaded (rounds=%u, visiting=%d, clock=%lu)\n",
-                  ds.rounds, ds.is_visiting, (unsigned long)ds.device_clock_epoch);
-    return SAVE_OK;
+    if(!_initialized)return SAVE_ERR_NVS_INIT;
+    if(prefs.isKey("device_v10"))return SAVE_ERR_VERSION_MISMATCH;
+    if(!prefs.isKey(DEVICE_STATE_KEY)){ds.init();return SAVE_ERR_NO_DATA;}
+    uint8_t bytes[sizeof(DeviceState)];
+    if(prefs.getBytesLength(DEVICE_STATE_KEY)!=sizeof(bytes)||prefs.getBytes(DEVICE_STATE_KEY,bytes,sizeof(bytes))!=sizeof(bytes))return SAVE_ERR_CORRUPTED;
+    if(bytes[offsetof(DeviceState,is_visiting)]>1)return SAVE_ERR_CORRUPTED;
+    DeviceState candidate;memcpy(&candidate,bytes,sizeof(bytes));
+    if(candidate.is_visiting&&candidate.owner_frozen_slot>=SAVE_SLOT_COUNT)return SAVE_ERR_CORRUPTED;
+    ds=candidate;return SAVE_OK;
 }

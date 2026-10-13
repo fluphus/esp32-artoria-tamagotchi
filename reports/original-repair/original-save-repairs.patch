@@ -1,0 +1,3610 @@
+diff --git a/README.md b/README.md
+index 6303c7f..8d2e6c6 100644
+--- a/README.md
++++ b/README.md
+@@ -1,6 +1,8 @@
+ [English](README.md) | [简体中文](README_zh.md) | [日本語](README_ja.md)
+ # 👑 Artoria Tamagotchi (Fate/Grand Order Virtual Pet)
+ 
++This repository maintains the original **Artoria game and v9 save format**. The reusable C++17 engine with Artoria and Pocket Sprout lives in [embedded-tamagotchi-engine](https://github.com/fluphus/embedded-tamagotchi-engine).
++
+ A Tamagotchi-like virtual pet project powered by the **ESP32-S3 (N16R8)**.
+ 
+ Raise your own Artoria! Start your journey with Saber Lily and guide her growth. Depending on your care and interactions, she can evolve into various classes including Archer, Lancer, Rider, and more.
+@@ -10,13 +12,13 @@ Raise your own Artoria! Start your journey with Saber Lily and guide her growth.
+ * **Time & Day Management:** Built-in internal clock to handle daily resets and penalties for missing meals.
+ * **Persistent Storage:** 3-slot save system with checksum validation, serial full or pet-only export, slot import with full-restore or visit (trade-in) mode, device-bound rounds/clock state, and import-time safeguards.
+ * **Interactive Actions:** Feed, Poke, and monitor status.
+-* **Presentation & Display:** Cutscenes for feed, combo chains, Poke, evolution, and similar flows are driven by an ordered animation queue; idle sprites are tiered from pet state (Health, Seriousness, etc.), including **Rhongomyniad**. SSD1351 128×128 65K color OLED via TFT_eSPI, plus a serial placeholder backend for headless testing. Optional: bake PNGs under `assets/` into flash-resident binaries (missing assets fall back to placeholders).
++* **Presentation & Display:** Cutscenes for feed, combo chains, Poke, evolution, and similar flows are driven by an ordered animation queue; idle sprites are tiered from pet state (Health, Seriousness, etc.), including **Rhongomyniad**. SSD1351 128×128 65K color OLED via Adafruit GFX / Adafruit SSD1351, plus a serial placeholder backend for headless testing. Optional: bake PNGs under `assets/` into flash-resident binaries (missing assets fall back to placeholders).
+ 
+ ## 🚧 Current Project Status
+ 
+ * **Gameplay & systems:** Core loops are in place end-to-end—feeding and combos, special foods, Poke, evolution, day roll-up, save import/export, gallery, destroy confirmation, and related flows all run. Recent work routes on-screen cutscenes through a single “queue frames, play them on time” path; idle poses are picked from pet state and loaded from flash (placeholders remain when art is missing).
+ * **Art & assets:** Final sprite / keyframe art is not all finished or wired in yet; the device still uses **stick figures** plus simple shapes and text so layouts and timing can be validated. Once assets are built through the `assets/` pipeline, the same logic can show real PNG sequences.
+-* **Display:** TFT_eSPI backend (SSD1351 128×128) and Serial placeholder backend both compile and run.
++* **Display:** SSD1351 backend (Adafruit libraries) and Serial placeholder backend both compile. Physical display and button checks for this legacy repair edition remain unverified.
+ * **Input:** 3-button physical input (L/M/R) with serial simulation (`btn l|m|r`, `btnl l|m|r`, `btnr l|m|r`).
+ 
+ ## 🛠️ Hardware Requirements
+@@ -41,18 +43,15 @@ Raise your own Artoria! Start your journey with Saber Lily and guide her growth.
+ ## Build
+ 
+ ```bash
+-pio run                    # Build (TFT_eSPI backend, default)
+-pio run -t upload          # Upload to device
+-pio device monitor         # Serial monitor (115200 baud)
++pio run -e esp32-s3-devkitc-1            # SSD1351 build
++pio run -e original-serial               # Serial placeholder build
++pio run -e esp32-s3-devkitc-1 -t upload  # Upload selected environment
++pio device monitor -b 115200            # Serial monitor
+ ```
+ 
+ To regenerate embedded art from PNGs under `assets/`, run `python tools/convert_assets.py` in a Python environment with **Pillow** installed (naming and folders are documented in `assets/README.md`). The PlatformIO pre-build hook stays commented by default so builds do not break when PlatformIO’s bundled Python lacks Pillow; if you skip conversion, the firmware still runs using stick-figure / placeholder graphics.
+ 
+-To switch to Serial placeholder backend (no screen), edit `src/display/display_config.h`:
+-```c
+-#define DISPLAY_BACKEND_SERIAL_PLACEHOLDER  1
+-#define DISPLAY_BACKEND_TFT_ESPI            0
+-```
++Select `original-serial` at build time; no header edits are needed. This backend still runs on ESP32-S3. Host tests use separate peripheral adapters. Install `Pillow` for PNG conversion and `pyserial` for the save tool.
+ 
+ ## Button Mapping
+ 
+@@ -100,12 +99,14 @@ To switch to Serial placeholder backend (no screen), edit `src/display/display_c
+ ### Destroy Combo
+ Hold all three buttons (L+M+R) for 5 seconds to trigger destroy confirmation (default cursor on NO).
+ 
++Confirm the date/time after first boot or power loss. In setup, L increases the current field, M moves to the next field or confirms, R moves back, and long L restores the editable default date.
++
+ ## Smoke Test Procedure (Serial / Buttons)
+ 
+ Use serial commands to simulate button presses. Connect at 115200 baud.
+ 
+ ### 1. Boot to Idle
+-Power on. Boot screen displays for ~1.5s, then transitions to Idle automatically.
++Power on and wait for the boot screen (~1.5s). First boot or power loss requires date/time confirmation with the buttons or `SET_TIME <unix_seconds>`; enter Idle only after setup succeeds. A recovery lock blocks normal play.
+ 
+ ### 2. Status Panel
+ ```
+@@ -121,7 +122,9 @@ btn l          # Start feed draw (shows 4 food cards with animation)
+ btn l          # Move cursor left
+ btn r          # Move cursor right
+ btn m          # Select food at cursor (repeat to select 3)
++btn r          # Move to a different food
+ btn m          # Second selection
++btn r          # Move to a third food
+ btn m          # Third selection -> auto-submit, shows Feed Result
+                # Feed Result stays for at least 1.5 seconds
+                # Then returns to idle automatically
+@@ -160,10 +163,10 @@ btn r          # Poke animation plays (~500ms)
+ 
+ ### 8. Destroy — Three-Button Hold
+ ```
+-btnl l         # Simulate long press L (in practice, hold all 3 for 5s)
+-               # For serial testing, use the 'reset' command instead
+-               # Or test destroy confirm UI:
+ ctx            # Check current context
++# Physically hold L+M+R for 5 seconds to test destroy confirmation.
++# 'btnl l' simulates only L; it does not simulate a simultaneous three-key hold.
++# 'reset' directly resets the pet / restores the owner, bypassing confirmation.
+ ```
+ Destroy confirm: default cursor on NO (safe). L/R to move, M to confirm.
+ 
+@@ -182,7 +185,7 @@ load           # Load save
+ erase          # Erase save
+ reset          # Destroy and reset pet (ends visit if visiting)
+ stime Y M D H m  # Set simulated time
+-SET_TIME <epoch> # Set system time (unix timestamp, triggers offline compensation)
++SET_TIME <epoch> # Confirm/set time; offline compensation applies during setup wait
+ hp <val>       # Debug: set health (0-100)
+ sr <val>       # Debug: set seriousness (0-100)
+ age <val>      # Debug: set age days
+@@ -228,7 +231,7 @@ Some fields are stored **per device** (not inside a slot): **`rounds`** (increme
+ 
+ **Pet-only import** (payload length = pet-only): **Visit mode** — among the two active slots, the newer pet is treated as the **owner** and that slot stays frozen on disk; the imported slot holds the **guest**, which is loaded into RAM. Local gallery data stays in place, but the guest’s current form is unlocked if needed. Import into the owner’s latest slot is **rejected** (pick the other active slot). **`rounds`** and **`device_clock_epoch`** are updated similarly to a full import.
+ 
+-**While visiting:** new **`SAVE_IMPORT_*`** is rejected; **`SET_TIME`**, **`stime`**, **`t <min>`**, and **`d`** are rejected so time does not drift with a guest loaded. **`reset`** destroys the guest and restores the owner (visit ends). Invalid payloads (e.g. **`save_time == 0`**) print **`[SaveImport] REJECTED:`** and abort.
++**While visiting:** new imports and **`stime`**, **`t <min>`**, and **`d`** are rejected. **`SET_TIME`** is rejected during normal visitor play; after power loss it can confirm the time and compensate the visitor while the owner remains frozen. **`reset`** destroys the guest and restores the owner (visit ends). Invalid payloads (e.g. **`save_time == 0`**) print **`[SaveImport] REJECTED:`** and abort.
+ 
+ ### Firmware commands
+ 
+@@ -262,7 +265,7 @@ py save_manager.py --port COM5 import --slot 1 --in slot0_full.bin
+ - **Full backup:** The imported slot joins the active pair; from the other two slots, the **older** one becomes the second active slot (by sequence, then save time; empty slots count as older). The remaining slot is **frozen** and skipped by auto/manual rotation. Success line: **`[SaveImport] Full backup restored ...`**.
+ - **Pet-only (visit):** Owner slot is frozen; guest lives in the imported slot; **`[SaveImport] Visit started ...`** on success. **`reset`** ends the visit and restores the owner.
+ - If the device was waiting for **first-time** clock setup when import completes, it leaves that wait using the stored device clock anchor when possible; normal boots are unchanged. Offline “catch-up from old save time” is **not** applied in the import paths described above.
+-- After alignment, data is persisted; if verification fails elsewhere in the stack, background retry may still apply as implemented.
++- Import, owner restoration and time confirmation use a durable recovery guard. A partial failure blocks gameplay and automatic writes, including after restart; it does not report full success or silently erase data. Ordinary v9 rotation still writes separate keys and is not a cross-key transaction.
+ 
+ ## Page Hold Behavior
+ 
+@@ -271,9 +274,31 @@ The display system uses a "page hold" mechanism to ensure result/confirmation pa
+ - **Feed Result (non-combo):** Held for 1500ms, input blocked, then auto-returns to idle.
+ - **Special Food Confirm (non-mapo):** Held for 1000ms, input blocked, then auto-returns to idle.
+ - **Mapo Tofu:** Animation plays for 1500ms (managed by animation system, not hold).
+-- **Boot:** Auto-transitions to idle after 1500ms.
++- **Boot:** After 1500ms, continues to Idle or the required time-setup screen. Recovery prevents normal operation.
+ - **Day End:** Animation plays for 1500ms, input blocked.
+ - **Evolution:** Animation plays for 2000ms, input blocked.
+ - **Destroy animation:** Animation plays for 2000ms, input blocked.
+ 
+ During any hold or animation, `isPageBlockingInput()` returns true and the MenuController skips input processing.
++
++## Verification and Recovery
++
++The offline repair suite runs actual production save, menu, time, display and serial paths with peripheral adapters:
++
++```sh
++python tests/host/run_all.py
++```
++
++Run from a Git checkout retaining the original baseline history. Build with PlatformIO first to install the ESP32-S3 target compiler used by ABI checks. See the [repair report](reports/original-repair/README.md) for commands, failure/interruption tests and remaining limits. This legacy repair edition has host regression and two-backend build evidence; its physical hardware tests have not been executed. Engine hardware results do not apply to this edition.
++
++The original v9 format remains **72 bytes pet-only / 84 bytes full**. This firmware does not read engine v10 backups. Normal v9 saves use multiple NVS keys; the recovery guard covers import, owner restoration and time confirmation, not all ordinary saves.
++
++If recovery is required, export a readable full slot before an explicit erase. Choose the actual retained owner slot from slot status / device state:
++
++```sh
++python SaveManager/save_manager.py --port PORT export --slot 0 --out owner.bin
++# After checking the backup, send erase in the serial console: it deletes game saves.
++python SaveManager/save_manager.py --port PORT import --slot 1 --in owner.bin
++```
++
++Normal boot does not erase data or automatically finish an interrupted protected operation. Offline catch-up supports at most 366 days, subject to age/epoch capacity; it preserves the original minute/day rules.
+diff --git a/README_ja.md b/README_ja.md
+index 3787b63..50b8734 100644
+--- a/README_ja.md
++++ b/README_ja.md
+@@ -1,6 +1,8 @@
+ [English](README.md) | [简体中文](README_zh.md) | [日本語](README_ja.md)
+ # 👑 アルトリア・たまごっち (Fate/Grand Order バーチャルペット)
+ 
++このリポジトリは元の**アルトリアのゲームとv9セーブ形式**を維持します。ArtoriaとPocket Sproutを含む再利用可能なC++17エンジンは、別リポジトリ[embedded-tamagotchi-engine](https://github.com/fluphus/embedded-tamagotchi-engine)にあります。
++
+ **ESP32-S3 (N16R8)** を搭載した、たまごっち風のバーチャルペットプロジェクトです。
+ 
+ あなただけのアルトリアを育てましょう！セイバー・リリィから旅を始め、彼女の成長を導きます。お世話やコミュニケーションに応じて、アーチャー、ランサー、ライダーなど、様々なクラスへと進化します。
+@@ -10,13 +12,13 @@
+ * **時間・日付管理：** 日替わりのリセットや、食事を与えなかった場合のペナルティを処理する内部時計を内蔵。
+ * **永続ストレージ：** 3スロットセーブ。チェックサム検証、シリアルでのフル／ペットのみエクスポート、フル復元またはビジット（ペットのみインポート）モード、デバイス紐づけの rounds／クロック状態、インポート時の拒否・整合処理に対応。
+ * **インタラクティブなアクション：** 餌やり、つつく（ポーク）、ステータス監視。
+-* **演出・表示：** 餌やり・コンボ・つつき・進化などの画面演出はアニメーションキューで順番に再生。待機の立ち絵は体力・真面目さなどの状態に応じて段階切り替え（**ロンギミニアド**／ランサー・アルトリア系の特例を含む）。TFT_eSPI 経由の SSD1351 128×128 65K カラー OLED と、ヘッドレス検証用のシリアル・プレースホルダー。`assets/` 配下の PNG をフラッシュ内蔵のバイナリ資源に焼き込むことも可能（未配備時は自動でプレースホルダへフォールバック）。
++* **演出・表示：** 餌やり・コンボ・つつき・進化などの画面演出はアニメーションキューで順番に再生。待機の立ち絵は体力・真面目さなどの状態に応じて段階切り替え（**ロンギミニアド**／ランサー・アルトリア系の特例を含む）。Adafruit GFX / Adafruit SSD1351 経由の SSD1351 128×128 65K カラー OLED と、ヘッドレス検証用のシリアル・プレースホルダー。`assets/` 配下の PNG をフラッシュ内蔵のバイナリ資源に焼き込むことも可能（未配備時は自動でプレースホルダへフォールバック）。
+ 
+ ## 🚧 現在のプロジェクト状況
+ 
+ * **ゲームプレイ・システム：** メインのゲーム機能（ループ、餌やりとコンボ、スペシャルフード、つつく、進化、日次締め、セーブのインポート／エクスポート、図鑑、破棄確認など）は一通り実装済みで遊べる状態。最近の更新で、餌やり・コンボ・つつきなどのカットシーンを「再生順を決め、決めた時間でコマ送りする」形に整理。待機のポーズはペットの状態から自動で選ばれ、フラッシュ上の画像を読み込む（未用意ならプレースホルダのまま）。
+ * **美術・素材：** 本番用のフレームアニメ／立ち絵は未確定または未接続の部分があります。現状デバイス上では**棒人間**に矩形とテキストを合わせたプレースホルダで、フローとレイアウトを検証しています。`assets/` のパイプラインで組み込み資源を生成すれば、同じロジックで実際の PNG シーケンスを表示できます。
+-* **ディスプレイ：** TFT_eSPI バックエンド（SSD1351 128×128）とシリアル・プレースホルダー・バックエンドの両方がビルドおよび実行可能。
++* **ディスプレイ：** SSD1351バックエンド（Adafruitライブラリ）とシリアル版の両方をビルド済みです。この旧版修復ブランチの物理画面とボタンは実機未検証です。
+ * **入力：** 3 ボタン物理入力（L/M/R）、シリアル模擬に対応（`btn l|m|r`、`btnl l|m|r`、`btnr l|m|r`）。
+ 
+ ## 🛠️ ハードウェア要件
+@@ -41,18 +43,15 @@
+ ## ビルド
+ 
+ ```bash
+-pio run                    # ビルド（TFT_eSPIバックエンド、デフォルト）
+-pio run -t upload          # デバイスにアップロード
+-pio device monitor         # シリアルモニター（115200ボー）
++pio run -e esp32-s3-devkitc-1            # SSD1351ビルド
++pio run -e original-serial               # シリアル版ビルド
++pio run -e esp32-s3-devkitc-1 -t upload  # 選択した環境を書き込み
++pio device monitor -b 115200            # シリアルモニター
+ ```
+ 
+ `assets/` 以下の PNG から組み込み資源を再生成するには、**Pillow** の入った Python 環境で `python tools/convert_assets.py` を実行してください（命名とディレクトリ規則は `assets/README.md`）。PlatformIO のプリビルド・フックは既定でコメントアウトしており、同梱 Python に Pillow が無い場合のビルド失敗を避けます。資源を生成していなくても、固件は棒人間／プレースホルダ表示でフローは動きます。
+ 
+-シリアル・プレースホルダー・バックエンド（画面なし）に切り替えるには、`src/display/display_config.h` を編集してください：
+-```c
+-#define DISPLAY_BACKEND_SERIAL_PLACEHOLDER  1
+-#define DISPLAY_BACKEND_TFT_ESPI            0
+-```
++ビルド時に`original-serial`を選択してください。ヘッダーの変更は不要です。このバックエンドもESP32-S3上で動作し、ホストテストは別の周辺機器アダプターを使用します。PNG変換には`Pillow`、セーブツールには`pyserial`が必要です。
+ 
+ ## ボタンマッピング
+ 
+@@ -100,12 +99,14 @@ pio device monitor         # シリアルモニター（115200ボー）
+ ### 破棄コンボ（Destroy Combo）
+ 3 つのボタン（L+M+R）を 5 秒間押し続けて破棄確認をトリガーします（デフォルトのカーソルは NO の上）。
+ 
++初回起動または電源断後は日時の確認が必要です。設定中はLで項目を増やし、Mで次へ／確定、Rで戻り、L長押しで編集日時を既定値に戻します。
++
+ ## スモークテスト手順（シリアル / ボタン）
+ 
+ シリアルコマンドを使用してボタン押下をシミュレートします。115200ボーで接続してください。
+ 
+ ### 1. 起動から待機へ（Boot → Idle）
+-電源を入れます。起動画面は約 1.5 秒表示され、その後自動的に待機画面へ遷移します。
++電源を入れて約1.5秒待ちます。初回起動／電源断後はボタンまたはSET_TIMEで日時を確認し、成功後に待機へ進みます。復旧ロック中は通常プレイできません。
+ 
+ ### 2. ステータスパネル（Status Panel）
+ ```
+@@ -121,7 +122,9 @@ btn l          # 餌やりドロー開始（4枚の食物カードをアニメ
+ btn l          # カーソル左移動
+ btn r          # カーソル右移動
+ btn m          # カーソル位置の食物を選択（3つ選択するまで繰り返す）
++btn r          # 別の食べ物に移動
+ btn m          # 2番目の選択
++btn r          # 3つ目の食べ物に移動
+ btn m          # 3番目の選択 -> 自動送信、餌やり結果を表示
+                 # 餌やり結果は最低1.5秒表示
+                 # その後自動的に待機に戻る
+@@ -160,10 +163,10 @@ btn r          # つつくアニメーション再生（約 500ms）
+ 
+ ### 8. 破棄・3 キー同時押し（Destroy，3-key combo）
+ ```
+-btnl l         # L長押しをシミュレート（実際の操作では3キーを5秒押し続ける）
+-                # シリアルテストでは、'reset'コマンドを使用してください
+-                # または破棄確認UIをテスト：
+ ctx            # 現在のコンテキストを確認
++# 物理的にL+M+Rを同時に5秒押してリセット確認を試します。
++# btnl lはLだけの長押しで、3キー同時押しにはなりません。
++# resetは確認を省略し、ペットをリセット／オーナーを復元します。
+ ```
+ 破棄確認：デフォルトカーソルはNO（安全）。L/Rで移動、Mで確認。
+ 
+@@ -182,7 +185,7 @@ load           # 保存をロード
+ erase          # 保存を消去
+ reset          # ペットを破棄してリセット（ビジット中は終了しオーナーを復元）
+ stime Y M D H m  # シミュレート時間を設定
+-SET_TIME <epoch> # システム時間を設定（unixタイムスタンプ、オフライン補償をトリガー）
++SET_TIME <epoch> # 時刻を確認／設定；設定待ちのときだけオフライン補償
+ hp <val>       # デバッグ: 健康度を設定 (0-100)
+ sr <val>       # デバッグ: 真面目さを設定 (0-100)
+ age <val>      # デバッグ: 年齢日数を設定
+@@ -228,7 +231,7 @@ ctx            # 現在のUIコンテキストを表示
+ 
+ **ペットのみインポート**（ペイロード長＝ペットのみ）：**ビジットモード** — アクティブ2スロットのうち新しい方を**オーナー**としてディスク上で凍結し、インポート先スロットに**ゲスト**を置いてRAMに読み込みます。ローカル図鑑は維持しつつ、ゲストの現在形態が必要なら解放します。インポート先がオーナーの最新スロットと同じ場合は **`REJECTED`** になります（もう一方のアクティブスロットを使ってください）。**`rounds`** と **`device_clock_epoch`** はフル時と同様に更新されます。
+ 
+-**ビジット中：** 新規 **`SAVE_IMPORT_*`** は拒否。**`SET_TIME`**、**`stime`**、**`t <min>`**、**`d`** は拒否（ゲスト読込中に時刻軸を動かさないため）。**`reset`** はゲストを破棄してオーナーを復元し、ビジットを終了します。不正パケット（例：**`save_time == 0`**）は **`[SaveImport] REJECTED:`** で中止します。
++**ビジット中：** 新規インポートと **`stime`**、**`t <min>`**、**`d`** は拒否します。通常プレイ中の **`SET_TIME`** も拒否しますが、電源断後の設定待ちではゲストの時刻確認・補償が可能です。オーナーは凍結したままです。**`reset`** はゲストを破棄してオーナーを復元し、ビジットを終了します。不正パケット（例：**`save_time == 0`**）は **`[SaveImport] REJECTED:`** で中止します。
+ 
+ ### ファームウェア側コマンド
+ 
+@@ -262,7 +265,7 @@ py save_manager.py --port COM5 import --slot 1 --in slot0_full.bin
+ - **フルバックアップ：** インポート先スロットはアクティブペアに入ります。残り2スロットのうち**古い**方がもう一方のアクティブになります（sequence 優先、必要なら save_time；空スロットは古い扱い）。残り1スロットは**凍結**し、以後の自動／手動ローテーション対象外です。成功時 **`[SaveImport] Full backup restored ...`** が出ます。
+ - **ペットのみ（ビジット）：** オーナースロットを凍結しゲストをインポート先に配置；成功時 **`[SaveImport] Visit started ...`**。**`reset`** でビジット終了・オーナー復元。
+ - インポート完了時にデバイスが**初回**時刻設定待ちなら、デバイスクロックのアンカーがあればその待ちを抜ける場合があります。通常の起動フローは変わりません。上記インポート経路では「古いセーブ時刻から現在まで一括オフライン清算」は行いません。
+-- 整合後に保存します。その他の経路で検証に失敗した場合は実装どおりバックグラウンド再試行が続くことがあります。
++- インポート、オーナー復元、時刻確認は永続復旧マーカーで保護します。途中失敗時は再起動後もゲーム操作と自動書き込みを停止し、完全成功の表示や自動削除はしません。通常のv9交互保存はキーごとの書き込みで、複数キーのトランザクションではありません。
+ 
+ ## ページホールド（Page Hold Behavior）
+ 
+@@ -271,9 +274,31 @@ py save_manager.py --port COM5 import --slot 1 --in slot0_full.bin
+ - **餌やり結果（ノンコンボ）：** 1500ms ホールド、入力ブロック、その後自動的に待機へ戻る。
+ - **スペシャルフード確認（麻婆以外）：** 1000ms ホールド、入力ブロック、その後自動的に待機へ戻る。
+ - **麻婆豆腐：** アニメーション 1500ms 再生（アニメーション側で管理し、ページホールドではない）。
+-- **起動：** 1500ms 後に自動で待機へ遷移。
++- **起動：** 1500ms後に待機または必要な時刻設定へ遷移。復旧ロック中は通常のゲームを開始しません。
+ - **日次締め：** アニメーション 1500ms 再生、入力ブロック。
+ - **進化：** アニメーション 2000ms 再生、入力ブロック。
+ - **破棄アニメーション：** アニメーション 2000ms 再生、入力ブロック。
+ 
+ ホールドまたはアニメーション中は `isPageBlockingInput()` が true を返し、MenuController は入力処理をスキップします。
++
++## 検証と手動復旧
++
++オフライン修復テストは周辺機器アダプターを使い、実際のセーブ・メニュー・時計・表示・シリアル処理を実行します。
++
++```sh
++python tests/host/run_all.py
++```
++
++元のベースライン履歴を保持するGitチェックアウトで実行してください。ABI検証に必要なESP32-S3コンパイラを用意するため、先にPlatformIOでビルドします。[修復報告](reports/original-repair/README.md)にコマンド、障害・中断テスト、制限を記録しています。この旧版修復ブランチはホスト回帰と2種類の表示ビルドを検証済みですが、物理ハードウェアは未検証です。エンジンの実機結果はこの版には適用されません。
++
++v9形式は**ペットのみ72バイト／完全バックアップ84バイト**のままです。このファームウェアはエンジンのv10バックアップを読みません。通常のv9保存は複数NVSキーを使います。復旧マーカーはインポート、オーナー復元、時刻確認を保護し、すべての通常保存をトランザクション化するものではありません。
++
++復旧時は、読めるスロットの完全バックアップを取り出してから明示的に消去します。スロット状態／デバイス状態を見て、実際に保持されているオーナースロットを選んでください。
++
++```sh
++python SaveManager/save_manager.py --port PORT export --slot 0 --out owner.bin
++# バックアップを確認してから、シリアルでeraseを送信。ゲームのセーブを削除します。
++python SaveManager/save_manager.py --port PORT import --slot 1 --in owner.bin
++```
++
++通常起動ではデータを削除せず、中断した保護対象操作を自動完了しません。オフライン補償は年齢／epoch容量内で最大366日とし、元の分・日次ルールを維持します。
+diff --git a/README_zh.md b/README_zh.md
+index 5046f2c..3a74630 100644
+--- a/README_zh.md
++++ b/README_zh.md
+@@ -1,6 +1,8 @@
+ [English](README.md) | [简体中文](README_zh.md) | [日本語](README_ja.md)
+ # 👑 阿尔托莉雅 拓麻歌子（Fate/Grand Order 虚拟宠物）
+ 
++本仓库维护原始的**阿尔托莉雅游戏与 v9 存档格式**。包含阿尔托莉雅和 Pocket Sprout 两包的可复用 C++17 引擎位于独立仓库 [embedded-tamagotchi-engine](https://github.com/fluphus/embedded-tamagotchi-engine)。
++
+ 一个基于 **ESP32-S3 (N16R8)** 驱动的类拓麻歌子（电子宠物）项目。
+ 
+ 培育你自己的阿尔托莉雅吧！从 Saber Lily 开始你的旅程并引导她成长。根据你的照顾方式和互动，她可以进化成不同的职阶，包括 Archer、Lancer、Rider 等等。
+@@ -10,13 +12,13 @@
+ * **时间与日期管理：** 内置时钟用于处理每日重置，以及未按时喂食的惩罚。
+ * **持久化存储：** 三槽存档系统，支持校验和验证；串口可导出完整备份或仅宠物；导入支持完整恢复或串门（交换宠物）；设备级轮次与时间锚点；导入保护与拒绝规则。
+ * **互动操作：** 喂食、戳一戳（互动）以及状态监控。
+-* **演出与显示：** 动画队列驱动的交互演出（喂食、连携、戳戳、进化等）；待机立绘按健康度、严肃度等分级展示（含 Rhongomyniad 等特殊规则）；通过 TFT_eSPI 驱动的 SSD1351 128x128 65K 彩色 OLED，并提供用于无头测试的串口占位符后端；可选将 `assets/` 下 PNG 转为固件内嵌二进制资源（缺资源时自动回退占位）。
++* **演出与显示：** 动画队列驱动的交互演出（喂食、连携、戳戳、进化等）；待机立绘按健康度、严肃度等分级展示（含 Rhongomyniad 等特殊规则）；通过 Adafruit GFX / Adafruit SSD1351 驱动的 SSD1351 128x128 65K 彩色 OLED，并提供用于无头测试的串口占位符后端；可选将 `assets/` 下 PNG 转为固件内嵌二进制资源（缺资源时自动回退占位）。
+ 
+ ## 🚧 当前项目状态
+ 
+ * **玩法与系统：** 主要游戏功能（循环、喂食与连携、特殊食物、戳戳、进化、日结、存档导入导出、图鉴、销毁确认等）已实现并可完整跑通；近期更新将喂食、连携、戳一戳等画面过场改为「先排好顺序、再按时切换帧」的统一播放方式，待机姿态会随角色状态自动挑选对应立绘，并从闪存加载配套图片（缺图时仍有占位）。
+ * **美术与素材：** 正式帧动画/立绘资源尚未全部定稿或接入；当前设备上仍以**火柴人**配合矩形与文字作为占位，便于验证流程与布局。接入 `assets/` 管线生成的内嵌资源后，同一套逻辑即可显示真实 PNG 序列。
+-* **显示：** TFT_eSPI 后端（SSD1351 128x128）和串口占位符后端均可编译并运行。
++* **显示：** SSD1351 后端（Adafruit 库）和串口占位后端均已编译；本原版维修分支的实体屏幕与按键尚未实测。
+ * **输入：** 3 物理按键输入（L/M/R），支持串口模拟（`btn l|m|r`，`btnl l|m|r`，`btnr l|m|r`）。
+ 
+ ## 🛠️ 硬件需求
+@@ -41,18 +43,15 @@
+ ## 编译
+ 
+ ```bash
+-pio run                    # 编译 (默认 TFT_eSPI 后端)
+-pio run -t upload          # 烧录到设备
+-pio device monitor         # 串口监视器 (波特率 115200)
++pio run -e esp32-s3-devkitc-1            # SSD1351 构建
++pio run -e original-serial               # 串口占位后端构建
++pio run -e esp32-s3-devkitc-1 -t upload  # 烧录所选环境
++pio device monitor -b 115200            # 串口监视器
+ ```
+ 
+ 如需从 `assets/` 下的 PNG 重新生成内嵌资源，请在已安装 Pillow 的 Python 环境中运行 `python tools/convert_assets.py`（命名与目录规则见 `assets/README.md`）。PlatformIO 预构建钩子默认保持注释，以免自带 Python 缺少 Pillow 导致构建失败；未生成资源时固件会使用火柴人/占位图形，流程仍可运行。
+ 
+-如需切换到串口占位符后端（无屏幕），请编辑 `src/display/display_config.h`：
+-```c
+-#define DISPLAY_BACKEND_SERIAL_PLACEHOLDER  1
+-#define DISPLAY_BACKEND_TFT_ESPI            0
+-```
++构建时选择 `original-serial`，无需修改头文件。该后端仍运行在 ESP32-S3 上；主机测试使用另一套外围适配器。PNG 转换需要 `Pillow`，存档工具需要 `pyserial`。
+ 
+ ## 按键映射
+ 
+@@ -100,12 +99,14 @@ pio device monitor         # 串口监视器 (波特率 115200)
+ ### 销毁连按组合（Destroy Combo）
+ 长按所有三个按键（L+M+R）5 秒钟以触发销毁确认（默认光标停留在 NO 上）。
+ 
++首次启动或断电后需要确认日期时间。设时页面 L 增加当前字段，M 下一字段或确认，R 返回上一字段，长按 L 恢复可编辑的默认日期。
++
+ ## 冒烟测试流程（串口 / 按键）
+ 
+ 使用串口命令模拟按键。连接波特率为 115200。
+ 
+ ### 1. 启动至待机（Boot → Idle）
+-开机。启动画面显示约 1.5 秒，然后自动切换至待机界面。
++开机并等待启动画面约1.5秒。首次启动或断电后，先通过按键或 SET_TIME 确认日期时间；设时成功后才进入待机，恢复锁下禁止正常游戏。
+ 
+ ### 2. 状态面板（Status Panel）
+ ```
+@@ -121,7 +122,9 @@ btn l          # 开始喂食抽卡 (带动画显示4张食物卡片)
+ btn l          # 光标左移
+ btn r          # 光标右移
+ btn m          # 选择光标处的食物 (重复以选择3个)
++btn r          # 移到另一个食物
+ btn m          # 第二次选择
++btn r          # 移到第三个食物
+ btn m          # 第三次选择 -> 自动提交，显示喂食结果
+                # 喂食结果至少停留 1.5 秒
+                # 然后自动返回待机
+@@ -160,10 +163,10 @@ btn r          # 播放戳一戳动画 (约 500 毫秒)
+ 
+ ### 8. 销毁 · 三键组合（Destroy，3-key combo）
+ ```
+-btnl l         # 模拟长按 L (实际操作中需长按3键5秒)
+-               # 在串口测试中，请使用 'reset' 命令
+-               # 或测试销毁确认 UI:
+ ctx            # 检查当前上下文
++# 实体同时按住 L+M+R 五秒，测试销毁确认。
++# btnl l 仅模拟长按左键，不会模拟三键同时长按。
++# reset 直接重置宠物或恢复主人，跳过销毁确认。
+ ```
+ 销毁确认：默认光标在 NO（安全）。L/R 移动，M 确认。
+ 
+@@ -182,7 +185,7 @@ load           # 读取存档
+ erase          # 擦除存档
+ reset          # 销毁并重置宠物（串门中会结束串门并恢复主人宠物）
+ stime Y M D H m  # 设置模拟时间
+-SET_TIME <epoch> # 设置系统时间 (unix 时间戳, 触发离线补偿)
++SET_TIME <epoch> # 确认/设置时间；等待设时时才进行离线补偿
+ hp <val>       # 调试: 设置健康度 (0-100)
+ sr <val>       # 调试: 设置严肃度 (0-100)
+ age <val>      # 调试: 设置年龄天数
+@@ -228,7 +231,7 @@ ctx            # 显示当前 UI 上下文
+ 
+ **仅宠物导入**（负载长度 = 仅宠物）：**串门模式** — 在两个活动槽中，较新的存档视为主人槽并在盘上冻结；导入目标槽存放**访客**，并载入内存。本地图鉴保留，但会为访客当前形态按需解锁。若导入目标槽就是主人最新槽，固件会 **`REJECTED`**（请换另一活动槽）。**`rounds`** 与 **`device_clock_epoch`** 的处理与完整导入类似。
+ 
+-**串门期间：** 不允许新的 **`SAVE_IMPORT_*`**；**`SET_TIME`**、**`stime`**、**`t <min>`**、**`d`** 会被拒绝（避免访客在位时改动时间轴）。**`reset`** 会销毁访客并恢复主人（串门结束）。非法包（例如 **`save_time == 0`**）会打印 **`[SaveImport] REJECTED:`** 并中止。
++**串门期间：** 拒绝新的导入以及 **`stime`**、**`t <min>`**、**`d`**。正常访客运行时拒绝 **`SET_TIME`**；断电后等待设时时可以确认时间并补偿访客，主人继续冻结。**`reset`** 会销毁访客并恢复主人（串门结束）。非法包（例如 **`save_time == 0`**）会打印 **`[SaveImport] REJECTED:`** 并中止。
+ 
+ ### 固件侧命令
+ 
+@@ -262,7 +265,7 @@ py save_manager.py --port COM5 import --slot 1 --in slot0_full.bin
+ - **完整备份：** 导入槽加入活动槽对；另两槽中取**更旧**的一槽作为第二活动槽（优先 `sequence`，必要时 `save_time`；空槽视为更旧）。剩余一槽**冻结**，不参与后续自动/手动轮转。成功时串口可出现 **`[SaveImport] Full backup restored ...`**。
+ - **仅宠物（串门）：** 冻结主人槽，访客在导入槽；成功时 **`[SaveImport] Visit started ...`**。**`reset`** 结束串门并恢复主人。
+ - 若导入完成时设备正处于**首次**时钟设置等待，可能在具备设备时钟锚点时退出该等待；常规已设时的启动流程不受影响。上述导入路径**不会**执行“从旧存档时间一路补算到现在”的离线结算。
+-- 对齐后会持久化；若其他逻辑路径校验失败，仍可能按实现进行后台重试。
++- 导入、主人恢复及设时使用持久恢复标记；部分失败会阻止玩法和自动写入，重启后仍保持保护，不假报完整成功或静默清档。普通 v9 轮转仍分键写入，不具备跨键事务。
+ 
+ ## 页面停留行为（Page Hold Behavior）
+ 
+@@ -271,9 +274,31 @@ py save_manager.py --port COM5 import --slot 1 --in slot0_full.bin
+ - **喂食结果（无连携）：** 停留 1500 毫秒，输入被阻止，然后自动返回待机。
+ - **特殊食物确认（非麻婆）：** 停留 1000 毫秒，输入被阻止，然后自动返回待机。
+ - **麻婆豆腐：** 播放动画 1500 毫秒（由动画系统管理，而非停留）。
+-- **启动：** 1500 毫秒后自动切换至待机。
++- **启动：** 1500 毫秒后进入待机或必要的设时页面；恢复锁下不能正常游戏。
+ - **日结：** 播放动画 1500 毫秒，输入被阻止。
+ - **进化：** 播放动画 2000 毫秒，输入被阻止。
+ - **销毁动画：** 播放动画 2000 毫秒，输入被阻止。
+ 
+-在任何停留或动画期间，`isPageBlockingInput()` 返回 true，并且 MenuController 会跳过输入处理。
+\ No newline at end of file
++在任何停留或动画期间，`isPageBlockingInput()` 返回 true，并且 MenuController 会跳过输入处理。
++
++## 验证与人工恢复
++
++离线维修套件通过外围适配器执行真实的存档、菜单、时间、显示及串口生产路径：
++
++```sh
++python tests/host/run_all.py
++```
++
++请在保留原始基线历史的 Git 工作副本中运行；先用 PlatformIO 构建以安装 ABI 检查所需的 ESP32-S3 目标编译器。[维修报告](reports/original-repair/README.md)列出了命令、故障/中断测试和剩余限制。本原版维修分支已完成主机回归和两后端构建，未进行实体硬件验收；引擎的板测结果不适用于本分支。
++
++保持原始 v9 格式：**仅宠物72字节 / 完整备份84字节**。本固件不读取引擎 v10 备份。普通 v9 保存仍使用多个 NVS 键；恢复标记保护导入、主人恢复和设时，不代表普通保存具备跨键事务。
++
++需要恢复时，先导出可读槽的完整备份，再明确擦除。槽号应根据存档状态/设备态选择实际保留的主人槽：
++
++```sh
++python SaveManager/save_manager.py --port PORT export --slot 0 --out owner.bin
++# 核实备份后，在串口明确发送 erase；它会删除游戏存档。
++python SaveManager/save_manager.py --port PORT import --slot 1 --in owner.bin
++```
++
++普通启动不会自动清档或自动完成中断的受保护操作。离线补偿最多366天，同时受年龄/epoch容量限制，保留原分钟和日结语义。
+diff --git a/SaveManager/save_manager.py b/SaveManager/save_manager.py
+index b512bbe..97b6d26 100644
+--- a/SaveManager/save_manager.py
++++ b/SaveManager/save_manager.py
+@@ -53,11 +53,19 @@ def _write_line(ser, line: str) -> None:
+ 
+ 
+ def _read_line(ser) -> str:
+-    b = ser.readline()
+-    if not b:
++    # pyserial.readline may return an incomplete line when its read times out.
++    # Preserve fragments on this connection; never parse an ACK/success prefix alone.
++    pending = getattr(ser, "_save_line_buffer", b"")
++    if b"\n" not in pending:
++        pending += ser.readline()
++    if len(pending) > 4096:
++        raise RuntimeError("串口响应行过长")
++    if b"\n" not in pending:
++        ser._save_line_buffer = pending
+         return ""
+-    # 设备侧输出基本是 ASCII
+-    return b.decode("utf-8", errors="replace").strip()
++    line, _, rest = pending.partition(b"\n")
++    ser._save_line_buffer = rest
++    return line.decode("utf-8", errors="replace").strip()
+ 
+ 
+ def _wait_for_lines(
+@@ -232,6 +240,13 @@ def cmd_export(port: str, baud: int, timeout: float, slot: int, out_path: Path,
+         except Exception as e:
+             raise ValueError(f"解析导出 HEX 失败: {e}\nBEGIN={begin}\nEND={end_line}")
+ 
++        declared = re.search(r"bytes=(\d+)", begin)
++        ended = re.search(r"bytes=(\d+)", end_line)
++        begin_slot = re.search(r"slot=(\d+)", begin)
++        end_slot = re.search(r"slot=(\d+)", end_line)
++        if (not declared or not ended or int(declared.group(1)) != len(raw) or int(ended.group(1)) != len(raw)
++                or not begin_slot or not end_slot or int(begin_slot.group(1)) != slot or int(end_slot.group(1)) != slot):
++            raise ValueError("导出长度或结束标记不匹配；未写入备份文件")
+         out_path.parent.mkdir(parents=True, exist_ok=True)
+         out_path.write_bytes(raw)
+         print(f"已导出 slot{slot} -> {out_path} ({len(raw)} bytes)")
+@@ -280,6 +295,7 @@ def cmd_import(port: str, baud: int, timeout: float, slot: int, in_path: Path) -
+             )
+ 
+         # 16 bytes/行。每行发送后等待设备 RECV 回执，避免高速连发导致最后一包丢失。
++        indexed = "offset=1" in ready_line
+         sent = 0
+         chunks = _chunk_hex(raw, 16)
+         for idx, hx in enumerate(chunks):
+@@ -288,7 +304,7 @@ def cmd_import(port: str, baud: int, timeout: float, slot: int, in_path: Path) -
+             expected_after = sent + chunk_bytes
+             acked = False
+             while retries < 3 and not acked:
+-                _write_line(ser, f"SAVE_IMPORT_DATA {hx}")
++                _write_line(ser, f"SAVE_IMPORT_DATA @{sent} {hx}" if indexed else f"SAVE_IMPORT_DATA {hx}")
+                 t0 = time.time()
+                 while time.time() - t0 < timeout:
+                     line = _read_line(ser)
+@@ -298,7 +314,7 @@ def cmd_import(port: str, baud: int, timeout: float, slot: int, in_path: Path) -
+                     if m_recv:
+                         cur = int(m_recv.group(1))
+                         # total = int(m_recv.group(2))  # 可用于调试
+-                        if cur >= expected_after:
++                        if cur == expected_after:
+                             sent = cur
+                             acked = True
+                             break
+@@ -309,6 +325,8 @@ def cmd_import(port: str, baud: int, timeout: float, slot: int, in_path: Path) -
+                         raise RuntimeError(f"设备端导入失败: {line}")
+                 if not acked:
+                     retries += 1
++                    if not indexed:
++                        break  # Unindexed append cannot safely retry a lost ACK.
+                     if retries < 3:
+                         print(f"[Import] 分包 {idx+1}/{len(chunks)} 未确认，重试 {retries}/2...")
+             if not acked:
+diff --git a/platformio.ini b/platformio.ini
+index 5a4e6a0..591315b 100644
+--- a/platformio.ini
++++ b/platformio.ini
+@@ -39,3 +39,11 @@ build_unflags = -std=gnu++11
+ lib_deps =
+     adafruit/Adafruit GFX Library
+     adafruit/Adafruit SSD1351 library
++
++; Compile-only serial display backend for offline verification.
++[env:original-serial]
++extends = env:esp32-s3-devkitc-1
++build_flags =
++    ${env:esp32-s3-devkitc-1.build_flags}
++    -DDISPLAY_BACKEND_SERIAL_PLACEHOLDER=1
++    -DDISPLAY_BACKEND_TFT_ESPI=0
+diff --git a/src/core/save_io.cpp b/src/core/save_io.cpp
+new file mode 100644
+index 0000000..9c7cc30
+--- /dev/null
++++ b/src/core/save_io.cpp
+@@ -0,0 +1,30 @@
++#include "save_io.h"
++#include <stdio.h>
++#include <stdarg.h>
++#ifdef ARDUINO
++#include <Arduino.h>
++#include <Preferences.h>
++namespace {Preferences preferences;}
++#endif
++namespace saveio {
++#ifdef ARDUINO
++Storage storage{&preferences,
++ [](void*p,const char*n,bool ro){return static_cast<Preferences*>(p)->begin(n,ro);},
++ [](void*p,const char*k){return static_cast<Preferences*>(p)->isKey(k);},
++ [](void*p,const char*k){return static_cast<Preferences*>(p)->getBytesLength(k);},
++ [](void*p,const char*k,void*b,size_t n){return static_cast<Preferences*>(p)->getBytes(k,b,n);},
++ [](void*p,const char*k,const void*b,size_t n){return static_cast<Preferences*>(p)->putBytes(k,b,n);},
++ [](void*p){return static_cast<Preferences*>(p)->clear();}};
++void (*diagnostic)(const char*)=[](const char*s){Serial.print(s);};
++#else
++Storage storage;
++void (*diagnostic)(const char*)=nullptr;
++#endif
++Log log;
++void Log::println(const char*s) const {if(diagnostic){diagnostic(s);diagnostic("\n");}}
++void Log::printf(const char*fmt,...) const {
++    char buffer[256];va_list args;va_start(args,fmt);
++    vsnprintf(buffer,sizeof(buffer),fmt,args);va_end(args);
++    if(diagnostic)diagnostic(buffer);
++}
++}
+diff --git a/src/core/save_io.h b/src/core/save_io.h
+new file mode 100644
+index 0000000..0bf7f93
+--- /dev/null
++++ b/src/core/save_io.h
+@@ -0,0 +1,25 @@
++#pragma once
++#include <stddef.h>
++#include <stdint.h>
++// Only storage/logging needed by the original v9 save code. No game engine.
++namespace saveio {
++struct Storage {
++    void* context=nullptr;
++    bool (*open)(void*,const char*,bool)=nullptr;
++    bool (*contains)(void*,const char*)=nullptr;
++    size_t (*length)(void*,const char*)=nullptr;
++    size_t (*read)(void*,const char*,void*,size_t)=nullptr;
++    size_t (*write)(void*,const char*,const void*,size_t)=nullptr;
++    bool (*eraseAll)(void*)=nullptr;
++    bool begin(const char*n,bool ro){return open&&open(context,n,ro);}
++    bool isKey(const char*k){return contains&&contains(context,k);}
++    size_t getBytesLength(const char*k){return length?length(context,k):0;}
++    size_t getBytes(const char*k,void*b,size_t n){return read?read(context,k,b,n):0;}
++    size_t putBytes(const char*k,const void*b,size_t n){return write?write(context,k,b,n):0;}
++    bool clear(){return eraseAll&&eraseAll(context);}
++};
++extern Storage storage;
++extern void (*diagnostic)(const char*);
++struct Log {void println(const char*) const;void printf(const char*,...) const;};
++extern Log log;
++}
+diff --git a/src/core/save_manager.cpp b/src/core/save_manager.cpp
+index b0a8ce6..3e30ea1 100644
+--- a/src/core/save_manager.cpp
++++ b/src/core/save_manager.cpp
+@@ -3,13 +3,14 @@
+ #include "save_manager.h"
+ #include "../config/game_config.h"
+ #include "../pet/gallery.h"
+-#include <Arduino.h>
+-#include <Preferences.h>
++#include "save_io.h"
+ #include <string.h>
++#include <initializer_list>
++#include <inttypes.h>
+ 
+ SaveManager saveManager;
+ 
+-static Preferences prefs;
++static auto& prefs=saveio::storage;
+ 
+ // NVS key 名称 (slot0/1/2)
+ static const char* HDR_KEYS[SAVE_SLOT_COUNT]  = { "s0_hdr", "s1_hdr", "s2_hdr" };
+@@ -20,6 +21,10 @@ static const char* ACTIVE_PAIR_KEY = "slot_cfg";
+ static const char* DEVICE_STATE_KEY = "dev_state";
+ 
+ static bool isPetStateSemanticallyValid(const PetState& pet) {
++    const auto* bytes=reinterpret_cast<const uint8_t*>(&pet);
++    for(const size_t offset:{offsetof(PetState,is_rhongomyniad),offsetof(PetState,white_fun_form_locked),
++        offsetof(PetState,is_black_rhongomyniad),offsetof(PetState,is_nobu),offsetof(PetState,is_oda_nobunaga)})
++        if(bytes[offset]>1)return false;
+     if (pet.form >= FORM_COUNT) return false;
+     if (pet.base_form >= FORM_COUNT) return false;
+     if (pet.alignment > ALIGN_BLACK) return false;
+@@ -43,24 +48,27 @@ const char* SaveManager::slotGalleryKey(uint8_t slot) {
+ }
+ 
+ SaveResult SaveManager::init() {
++    _initialized=false;_recoveryRequired=true;
+     bool ok = prefs.begin(SAVE_NVS_NAMESPACE, false);
+     if (!ok) {
+-        Serial.println("[Save] ERROR: NVS init failed");
++        saveio::log.println("[Save] ERROR: NVS init failed");
+         return SAVE_ERR_NVS_INIT;
+     }
+ 
+     _initialized = true;
++    _operation=false;_frozenOwner=0xff;
++    _recoveryRequired=hasSave();
++    DeviceState device;device.init();
++    if(loadDeviceState(device)==SAVE_OK&&device.is_visiting)_frozenOwner=device.owner_frozen_slot;
+     _lastSaveTime = 0;
+     _stickyWriteSlot = 0xFF;
+     _activeSlotA = 0;
+     _activeSlotB = 1;
+ 
+-    Serial.println("[Save] NVS initialized (multi-slot)");
++    saveio::log.println("[Save] NVS initialized (multi-slot)");
+ 
+     resyncSequenceFromNvs();
+-    loadActivePairConfig();
+-
+-    return SAVE_OK;
++    return loadActivePairConfig();
+ }
+ 
+ void SaveManager::resyncSequenceFromNvs() {
+@@ -71,25 +79,25 @@ void SaveManager::resyncSequenceFromNvs() {
+         if (readSlotHeader(i, hdr)) {
+             validCount++;
+             if (hdr.sequence > maxSeq) maxSeq = hdr.sequence;
+-            Serial.printf("[Save] 存档%u (slot %u): seq=%lu, ver=%d\n",
++            saveio::log.printf("[Save] 存档%u (slot %u): seq=%" PRIu32 ", ver=%d\n",
+                           (unsigned)(i + 1), i, hdr.sequence, hdr.version);
+         } else {
+-            Serial.printf("[Save] 存档%u (slot %u): empty/invalid\n", (unsigned)(i + 1), i);
++            saveio::log.printf("[Save] 存档%u (slot %u): empty/invalid\n", (unsigned)(i + 1), i);
+         }
+     }
+ 
+-    _nextSequence = maxSeq + 1;
++    _nextSequence = maxSeq == UINT32_MAX ? 0 : maxSeq + 1;
+     if (validCount > 0)
+-        Serial.printf("[Save] Found %d valid slot(s), next seq=%lu\n", validCount, _nextSequence);
++        saveio::log.printf("[Save] Found %d valid slot(s), next seq=%" PRIu32 "\n", validCount, _nextSequence);
+     else
+-        Serial.println("[Save] No existing save data");
++        saveio::log.println("[Save] No existing save data");
+ }
+ 
+ bool SaveManager::isSlotActive(uint8_t slot) const {
+     return (slot == _activeSlotA) || (slot == _activeSlotB);
+ }
+ 
+-void SaveManager::loadActivePairConfig() {
++SaveResult SaveManager::loadActivePairConfig() {
+     struct PairCfg {
+         uint8_t a;
+         uint8_t b;
+@@ -106,12 +114,13 @@ void SaveManager::loadActivePairConfig() {
+     } else {
+         _activeSlotA = 0;
+         _activeSlotB = 1;
+-        persistActivePairConfig();
++        if(persistActivePairConfig()!=SAVE_OK){requireRecovery();return SAVE_ERR_WRITE;}
+     }
+-    Serial.printf("[Save] Active slots: %u,%u\n", _activeSlotA, _activeSlotB);
++    saveio::log.printf("[Save] Active slots: %u,%u\n", _activeSlotA, _activeSlotB);
++    return SAVE_OK;
+ }
+ 
+-void SaveManager::persistActivePairConfig() {
++SaveResult SaveManager::persistActivePairConfig() {
+     struct PairCfg {
+         uint8_t a;
+         uint8_t b;
+@@ -119,16 +128,19 @@ void SaveManager::persistActivePairConfig() {
+     } cfg{};
+     cfg.a = _activeSlotA;
+     cfg.b = _activeSlotB;
+-    prefs.putBytes(ACTIVE_PAIR_KEY, &cfg, sizeof(cfg));
++    return prefs.putBytes(ACTIVE_PAIR_KEY, &cfg, sizeof(cfg))==sizeof(cfg)?SAVE_OK:SAVE_ERR_WRITE;
+ }
+ 
+ SaveResult SaveManager::save(const PetState& pet, uint32_t saveTime) {
+     if (!_initialized) return SAVE_ERR_NVS_INIT;
+ 
++    if(_recoveryRequired)return SAVE_ERR_CORRUPTED;
++    if(_nextSequence==0){saveio::log.println("[Save] Sequence exhausted; records preserved, export before explicit recovery.");return SAVE_ERR_WRITE;}
+     uint8_t targetSlot = getSaveTargetSlot();
++    if(targetSlot>=SAVE_SLOT_COUNT)return SAVE_ERR_CORRUPTED;
+ 
+     // 构建存档头
+-    SaveHeader header;
++    SaveHeader header{};
+     header.version = SAVE_DATA_VERSION;
+     header.data_size = sizeof(PetState);
+     header.checksum = calcChecksum((const uint8_t*)&pet, sizeof(PetState));
+@@ -138,7 +150,7 @@ SaveResult SaveManager::save(const PetState& pet, uint32_t saveTime) {
+     // 写入头
+     size_t written = prefs.putBytes(slotHdrKey(targetSlot), &header, sizeof(SaveHeader));
+     if (written != sizeof(SaveHeader)) {
+-        Serial.printf("[Save] ERROR: Failed to write header to 存档%u (slot %u)\n",
++        saveio::log.printf("[Save] ERROR: Failed to write header to 存档%u (slot %u)\n",
+                       (unsigned)(targetSlot + 1), targetSlot);
+         return SAVE_ERR_WRITE;
+     }
+@@ -146,24 +158,25 @@ SaveResult SaveManager::save(const PetState& pet, uint32_t saveTime) {
+     // 写入数据
+     written = prefs.putBytes(slotDataKey(targetSlot), &pet, sizeof(PetState));
+     if (written != sizeof(PetState)) {
+-        Serial.printf("[Save] ERROR: Failed to write data to 存档%u (slot %u)\n",
++        saveio::log.printf("[Save] ERROR: Failed to write data to 存档%u (slot %u)\n",
+                       (unsigned)(targetSlot + 1), targetSlot);
+         return SAVE_ERR_WRITE;
+     }
+ 
+     if (!verifyWrittenSlot(targetSlot, saveTime, _nextSequence, pet)) {
+         _stickyWriteSlot = targetSlot;
+-        Serial.printf("[Save] VERIFY FAIL: 存档%u (slot %u) data invalid after write; "
+-                      "will retry this slot until OK (seq still %lu)\n",
++        saveio::log.printf("[Save] VERIFY FAIL: 存档%u (slot %u) data invalid after write; "
++                      "will retry this slot until OK (seq still %" PRIu32 ")\n",
+                       (unsigned)(targetSlot + 1), targetSlot, _nextSequence);
+         return SAVE_ERR_VERIFY;
+     }
+ 
+     _stickyWriteSlot = 0xFF;
+-    Serial.printf("[Save] 存档%u (slot %u) saved (seq=%lu, %d bytes, crc=0x%04X)\n",
++    saveio::log.printf("[Save] 存档%u (slot %u) saved (seq=%" PRIu32 ", %d bytes, crc=0x%04X)\n",
+                   (unsigned)(targetSlot + 1), targetSlot, _nextSequence,
+                   (int)sizeof(PetState), header.checksum);
+-    syncGlobalGalleryToSlot(targetSlot);
++    const auto galleryResult=syncGlobalGalleryToSlot(targetSlot);
++    if(galleryResult!=SAVE_OK)return galleryResult;
+ 
+     _nextSequence++;
+     return SAVE_OK;
+@@ -172,6 +185,17 @@ SaveResult SaveManager::save(const PetState& pet, uint32_t saveTime) {
+ SaveResult SaveManager::load(PetState& pet) {
+     if (!_initialized) return SAVE_ERR_NVS_INIT;
+ 
++    _recoveryRequired=true;
++    if(operationPending())return SAVE_ERR_CORRUPTED;
++    DeviceState device;device.init();
++    auto result=loadDeviceState(device);
++    if(result!=SAVE_OK&&result!=SAVE_ERR_NO_DATA)return result;
++    GalleryData gallery;gallery.init();result=loadGallery(gallery);
++    if(result!=SAVE_OK&&result!=SAVE_ERR_NO_DATA)return result;
++    _frozenOwner=device.is_visiting?device.owner_frozen_slot:0xff;
++    if(device.is_visiting&&setActivePairForVisit(_frozenOwner)!=SAVE_OK)return SAVE_ERR_WRITE;
++    const auto readable=[&](uint8_t slot){return slot!=_frozenOwner;};
++
+     // 先全槽扫描：若“有且仅有一个有效槽”，固定从该槽加载并重建活动槽对
+     struct FullSlotInfo {
+         bool valid;
+@@ -182,7 +206,8 @@ SaveResult SaveManager::load(PetState& pet) {
+     uint8_t onlyValidSlot = 0xFF;
+     for (uint8_t i = 0; i < SAVE_SLOT_COUNT; i++) {
+         SaveHeader h;
+-        bool ok = readSlotHeader(i, h);
++        PetState candidate;
++        bool ok = readable(i) && readSlotHeader(i, h) && loadSlot(i,candidate)==SAVE_OK;
+         full[i].valid = ok;
+         if (ok) {
+             full[i].hdr = h;
+@@ -191,16 +216,17 @@ SaveResult SaveManager::load(PetState& pet) {
+         }
+     }
+     if (validCount == 1 && onlyValidSlot < SAVE_SLOT_COUNT) {
+-        Serial.printf("[Save] Only one valid slot found: %u. Forcing load from it.\n", onlyValidSlot);
+-        setActivePairForImportedBaseSlot(onlyValidSlot);
++        saveio::log.printf("[Save] Only one valid slot found: %u. Forcing load from it.\n", onlyValidSlot);
++        if(!device.is_visiting&&setActivePairForImportedBaseSlot(onlyValidSlot)!=SAVE_OK)return SAVE_ERR_WRITE;
+         SaveResult r = loadSlot(onlyValidSlot, pet);
+         if (r == SAVE_OK) {
+             _loadedSaveTime = full[onlyValidSlot].hdr.save_time;
+-            Serial.printf("[Save] Loaded from only valid slot %u (save_time=%lu)\n",
++            saveio::log.printf("[Save] Loaded from only valid slot %u (save_time=%" PRIu32 ")\n",
+                           onlyValidSlot, _loadedSaveTime);
++            _recoveryRequired=false;
+             return SAVE_OK;
+         }
+-        Serial.printf("[Save] Only valid slot %u failed to load (err=%d)\n", onlyValidSlot, r);
++        saveio::log.printf("[Save] Only valid slot %u failed to load (err=%d)\n", onlyValidSlot, r);
+         return r;
+     }
+ 
+@@ -215,7 +241,7 @@ SaveResult SaveManager::load(PetState& pet) {
+     for (uint8_t i = 0; i < SAVE_SLOT_COUNT; i++) {
+         SaveHeader hdr;
+         slots[i].slot = i;
+-        if (!isSlotActive(i)) {
++        if (!isSlotActive(i)||!readable(i)) {
+             slots[i].valid = false;
+             slots[i].sequence = 0;
+             continue;
+@@ -241,7 +267,7 @@ SaveResult SaveManager::load(PetState& pet) {
+         if (!slots[i].valid) continue;
+         anyActiveValid = true;
+ 
+-        Serial.printf("[Save] Trying slot %d (seq=%lu)...\n", slots[i].slot, slots[i].sequence);
++        saveio::log.printf("[Save] Trying slot %d (seq=%" PRIu32 ")...\n", slots[i].slot, slots[i].sequence);
+         SaveResult r = loadSlot(slots[i].slot, pet);
+         if (r == SAVE_OK) {
+             // 读取该槽的 save_time
+@@ -249,14 +275,15 @@ SaveResult SaveManager::load(PetState& pet) {
+             if (readSlotHeader(slots[i].slot, hdr)) {
+                 _loadedSaveTime = hdr.save_time;
+             }
+-            Serial.printf("[Save] Loaded from slot %d (save_time=%lu)\n", slots[i].slot, _loadedSaveTime);
++            saveio::log.printf("[Save] Loaded from slot %d (save_time=%" PRIu32 ")\n", slots[i].slot, _loadedSaveTime);
++            _recoveryRequired=false;
+             return SAVE_OK;
+         }
+-        Serial.printf("[Save] Slot %d failed (err=%d), trying next...\n", slots[i].slot, r);
++        saveio::log.printf("[Save] Slot %d failed (err=%d), trying next...\n", slots[i].slot, r);
+     }
+ 
+     // 兜底：活动槽对失败后，扫描全槽尝试恢复（配置异常/历史残留时避免“有档读不到”）
+-    Serial.println("[Save] Active-pair load failed, trying full-slot fallback...");
++    saveio::log.println("[Save] Active-pair load failed, trying full-slot fallback...");
+     struct FallbackInfo {
+         uint8_t slot;
+         uint32_t sequence;
+@@ -266,7 +293,7 @@ SaveResult SaveManager::load(PetState& pet) {
+     for (uint8_t i = 0; i < SAVE_SLOT_COUNT; i++) {
+         SaveHeader hdr;
+         fb[i].slot = i;
+-        fb[i].valid = readSlotHeader(i, hdr);
++        fb[i].valid = readable(i) && readSlotHeader(i, hdr);
+         fb[i].sequence = fb[i].valid ? hdr.sequence : 0;
+     }
+     for (uint8_t i = 0; i < SAVE_SLOT_COUNT - 1; i++) {
+@@ -286,19 +313,20 @@ SaveResult SaveManager::load(PetState& pet) {
+             if (readSlotHeader(fb[i].slot, hdr)) {
+                 _loadedSaveTime = hdr.save_time;
+             }
+-            Serial.printf("[Save] Fallback loaded slot %d (seq=%lu, save_time=%lu)\n",
++            saveio::log.printf("[Save] Fallback loaded slot %d (seq=%" PRIu32 ", save_time=%" PRIu32 ")\n",
+                           fb[i].slot, fb[i].sequence, _loadedSaveTime);
+             // 自动修复活动槽对：以该槽为导入基槽套用通用规则
+-            setActivePairForImportedBaseSlot(fb[i].slot);
++            if(!device.is_visiting&&setActivePairForImportedBaseSlot(fb[i].slot)!=SAVE_OK)return SAVE_ERR_WRITE;
++            _recoveryRequired=false;
+             return SAVE_OK;
+         }
+-        Serial.printf("[Save] Fallback slot %d failed (err=%d)\n", fb[i].slot, r);
++        saveio::log.printf("[Save] Fallback slot %d failed (err=%d)\n", fb[i].slot, r);
+     }
+ 
+     if (!anyActiveValid) {
+-        Serial.println("[Save] Active pair had no valid header, and fallback found no recoverable save");
++        saveio::log.println("[Save] Active pair had no valid header, and fallback found no recoverable save");
+     } else {
+-        Serial.println("[Save] Active pair had headers but all loads failed; fallback also failed");
++        saveio::log.println("[Save] Active pair had headers but all loads failed; fallback also failed");
+     }
+     return SAVE_ERR_NO_DATA;
+ }
+@@ -346,6 +374,9 @@ bool SaveManager::verifyLatestSave(uint32_t expectedEpoch, const PetState& pet)
+ }
+ 
+ SaveResult SaveManager::loadSlot(uint8_t slot, PetState& pet) {
++    if(slot>=SAVE_SLOT_COUNT)return SAVE_ERR_CORRUPTED;
++    const char* newer[3]={"s0_v10","s1_v10","s2_v10"};
++    if(prefs.isKey(newer[slot]))return SAVE_ERR_VERSION_MISMATCH;
+     SaveHeader header;
+     const char* hdrKey = slotHdrKey(slot);
+     const char* datKey = slotDataKey(slot);
+@@ -369,11 +400,15 @@ SaveResult SaveManager::loadSlot(uint8_t slot, PetState& pet) {
+     uint16_t checksum = calcChecksum((const uint8_t*)&temp, sizeof(PetState));
+     if (checksum != header.checksum) return SAVE_ERR_CHECKSUM;
+ 
++    if(!isPetStateSemanticallyValid(temp))return SAVE_ERR_CORRUPTED;
++    GalleryData gallery;
++    if(prefs.isKey(slotGalleryKey(slot))&&!loadSlotGallery(slot,gallery))return SAVE_ERR_CORRUPTED;
+     pet = temp;
+     return SAVE_OK;
+ }
+ 
+ SaveResult SaveManager::loadFromSlot(uint8_t slot, PetState& pet) {
++    if(operationPending()&&!_operation)return SAVE_ERR_CORRUPTED;
+     if (!_initialized) return SAVE_ERR_NVS_INIT;
+     if (slot >= SAVE_SLOT_COUNT) return SAVE_ERR_CORRUPTED;
+ 
+@@ -383,12 +418,15 @@ SaveResult SaveManager::loadFromSlot(uint8_t slot, PetState& pet) {
+     SaveHeader hdr;
+     if (!readSlotHeader(slot, hdr)) return SAVE_ERR_CORRUPTED;
+     _loadedSaveTime = hdr.save_time;
++    _recoveryRequired=false;
+     return SAVE_OK;
+ }
+ 
+ SaveResult SaveManager::exportSlotRaw(uint8_t slot, SaveHeader& hdr, PetState& pet) {
+     if (!_initialized) return SAVE_ERR_NVS_INIT;
+     if (slot >= SAVE_SLOT_COUNT) return SAVE_ERR_CORRUPTED;
++    PetState checked;const auto validation=loadSlot(slot,checked);
++    if(validation!=SAVE_OK)return validation;
+ 
+     const char* hdrKey = slotHdrKey(slot);
+     const char* datKey = slotDataKey(slot);
+@@ -438,10 +476,7 @@ bool SaveManager::getSlotStatus(uint8_t slot, SaveHeader& hdr, SaveResult& statu
+     return status == SAVE_OK;
+ }
+ 
+-SaveResult SaveManager::importSlotRaw(uint8_t slot, const SaveHeader& hdrIn, const PetState& pet, bool forceNewest) {
+-    if (!_initialized) return SAVE_ERR_NVS_INIT;
+-    if (slot >= SAVE_SLOT_COUNT) return SAVE_ERR_CORRUPTED;
+-
++SaveResult SaveManager::validateImport(const SaveHeader& hdrIn,const PetState& pet) {
+     if (hdrIn.version != SAVE_DATA_VERSION) return SAVE_ERR_VERSION_MISMATCH;
+     if (hdrIn.data_size != sizeof(PetState)) return SAVE_ERR_CORRUPTED;
+ 
+@@ -449,9 +484,21 @@ SaveResult SaveManager::importSlotRaw(uint8_t slot, const SaveHeader& hdrIn, con
+     if (hdrIn.checksum != petSum) return SAVE_ERR_CHECKSUM;
+     if (!isPetStateSemanticallyValid(pet)) return SAVE_ERR_CORRUPTED;
+ 
++    return SAVE_OK;
++}
++
++SaveResult SaveManager::importSlotRaw(uint8_t slot, const SaveHeader& hdrIn, const PetState& pet, bool forceNewest) {
++    if((operationPending()&&!_operation)||slot==_frozenOwner)return SAVE_ERR_CORRUPTED;
++    if (!_initialized) return SAVE_ERR_NVS_INIT;
++    if (slot >= SAVE_SLOT_COUNT) return SAVE_ERR_CORRUPTED;
++
++    const auto validation=validateImport(hdrIn,pet);
++    if(validation!=SAVE_OK)return validation;
++
+     SaveHeader toWrite = hdrIn;
+     if (forceNewest) {
+         resyncSequenceFromNvs();
++        if(_nextSequence==0)return SAVE_ERR_WRITE;
+         toWrite.sequence = _nextSequence;
+     }
+ 
+@@ -464,12 +511,13 @@ SaveResult SaveManager::importSlotRaw(uint8_t slot, const SaveHeader& hdrIn, con
+ 
+     _stickyWriteSlot = 0xFF;
+     resyncSequenceFromNvs();
++    _recoveryRequired=false;
+     return SAVE_OK;
+ }
+ 
+-void SaveManager::setActivePairForImportedBaseSlot(uint8_t baseSlot) {
++SaveResult SaveManager::setActivePairForImportedBaseSlot(uint8_t baseSlot) {
+     if (baseSlot >= SAVE_SLOT_COUNT) {
+-        return;
++        return SAVE_ERR_CORRUPTED;
+     }
+ 
+     // 导入完整备份时：不需要保留现有存档
+@@ -516,14 +564,16 @@ void SaveManager::setActivePairForImportedBaseSlot(uint8_t baseSlot) {
+ 
+     _activeSlotA = baseSlot;
+     _activeSlotB = older;
+-    persistActivePairConfig();
+-    Serial.printf("[Save] Active slots updated after import: %u,%u (frozen=%u)\n",
++    if(persistActivePairConfig()!=SAVE_OK){requireRecovery();return SAVE_ERR_WRITE;}
++    saveio::log.printf("[Save] Active slots updated after import: %u,%u (frozen=%u)\n",
+                   _activeSlotA, _activeSlotB, frozen);
++    return SAVE_OK;
+ }
+ 
+-void SaveManager::setActivePairForVisit(uint8_t ownerFrozenSlot) {
+-    if (ownerFrozenSlot >= SAVE_SLOT_COUNT) return;
++SaveResult SaveManager::setActivePairForVisit(uint8_t ownerFrozenSlot) {
++    if (ownerFrozenSlot >= SAVE_SLOT_COUNT) return SAVE_ERR_CORRUPTED;
+ 
++    _frozenOwner=ownerFrozenSlot;
+     // 串门：冻结主人存档所在槽，其余两槽作为访客宠物的轮转写入槽
+     uint8_t others[2];
+     uint8_t k = 0;
+@@ -533,33 +583,40 @@ void SaveManager::setActivePairForVisit(uint8_t ownerFrozenSlot) {
+     }
+     _activeSlotA = others[0];
+     _activeSlotB = others[1];
+-    persistActivePairConfig();
+-    Serial.printf("[Save] Active slots for visit: %u,%u (owner frozen=%u)\n",
++    if(persistActivePairConfig()!=SAVE_OK){requireRecovery();return SAVE_ERR_WRITE;}
++    saveio::log.printf("[Save] Active slots for visit: %u,%u (owner frozen=%u)\n",
+                   _activeSlotA, _activeSlotB, ownerFrozenSlot);
++    return SAVE_OK;
+ }
+ 
+-void SaveManager::setActivePairAfterVisitEnd(uint8_t ownerSlot) {
+-    if (ownerSlot >= SAVE_SLOT_COUNT) return;
++SaveResult SaveManager::setActivePairAfterVisitEnd(uint8_t ownerSlot) {
++    if (ownerSlot >= SAVE_SLOT_COUNT) return SAVE_ERR_CORRUPTED;
+ 
+     // 串门结束：主人存档槽回到活跃对，另一个槽选更旧的
+-    setActivePairForImportedBaseSlot(ownerSlot);
+-    Serial.printf("[Save] Active slots restored after visit end (owner=%u)\n", ownerSlot);
++    const auto result=setActivePairForImportedBaseSlot(ownerSlot);
++    if(result!=SAVE_OK)return result;
++    saveio::log.printf("[Save] Active slots restored after visit end (owner=%u)\n", ownerSlot);
++    return SAVE_OK;
+ }
+ 
+-void SaveManager::setActivePair(uint8_t a, uint8_t b) {
++SaveResult SaveManager::setActivePair(uint8_t a, uint8_t b) {
+     if (a >= SAVE_SLOT_COUNT || b >= SAVE_SLOT_COUNT || a == b) {
+-        Serial.printf("[Save] WARN: setActivePair(%u,%u) invalid, reloading from NVS\n", a, b);
++        saveio::log.printf("[Save] WARN: setActivePair(%u,%u) invalid, reloading from NVS\n", a, b);
+         loadActivePairConfig();
+-        return;
++        return SAVE_ERR_CORRUPTED;
+     }
+     _activeSlotA = a;
+     _activeSlotB = b;
+-    persistActivePairConfig();
+-    Serial.printf("[Save] Active slots set directly: %u,%u\n", _activeSlotA, _activeSlotB);
++    if(persistActivePairConfig()!=SAVE_OK){requireRecovery();return SAVE_ERR_WRITE;}
++    saveio::log.printf("[Save] Active slots set directly: %u,%u\n", _activeSlotA, _activeSlotB);
++    return SAVE_OK;
+ }
+ 
+ bool SaveManager::readSlotHeader(uint8_t slot, SaveHeader& hdr) {
+     if (!_initialized) return false;
++    if(slot>=SAVE_SLOT_COUNT)return false;
++    const char* newer[3]={"s0_v10","s1_v10","s2_v10"};
++    if(prefs.isKey(newer[slot]))return false;
+     const char* hdrKey = slotHdrKey(slot);
+     if (!prefs.isKey(hdrKey)) return false;
+     size_t readLen = prefs.getBytes(hdrKey, &hdr, sizeof(SaveHeader));
+@@ -570,34 +627,39 @@ bool SaveManager::readSlotHeader(uint8_t slot, SaveHeader& hdr) {
+ }
+ 
+ bool SaveManager::loadSlotGallery(uint8_t slot, GalleryData& gallery) {
+-    if (!_initialized) return false;
+-    if (slot >= SAVE_SLOT_COUNT) return false;
+-
+-    const char* key = slotGalleryKey(slot);
+-    if (!prefs.isKey(key)) return false;
+-    size_t readLen = prefs.getBytes(key, &gallery, sizeof(GalleryData));
+-    return readLen == sizeof(GalleryData);
++    if(!_initialized||slot>=SAVE_SLOT_COUNT)return false;
++    uint8_t bytes[sizeof(GalleryData)];const auto key=slotGalleryKey(slot);
++    if(prefs.getBytesLength(key)!=sizeof(bytes)||prefs.getBytes(key,bytes,sizeof(bytes))!=sizeof(bytes))return false;
++    for(const auto value:bytes)if(value>1)return false;
++    memcpy(&gallery,bytes,sizeof(bytes));return true;
+ }
+ 
+-void SaveManager::syncGlobalGalleryToSlot(uint8_t slot) {
+-    if (!_initialized) return;
+-    if (slot >= SAVE_SLOT_COUNT) return;
++SaveResult SaveManager::syncGlobalGalleryToSlot(uint8_t slot) {
++    if(!_initialized)return SAVE_ERR_NVS_INIT;
++    if(_recoveryRequired||slot>=SAVE_SLOT_COUNT||slot==_frozenOwner)return SAVE_ERR_CORRUPTED;
++    GalleryData gallery;gallery.init();const auto result=loadGallery(gallery);
++    if(result!=SAVE_OK&&result!=SAVE_ERR_NO_DATA)return result;
++    return prefs.putBytes(slotGalleryKey(slot),&gallery,sizeof(gallery))==sizeof(gallery)?SAVE_OK:SAVE_ERR_WRITE;
++}
+ 
+-    GalleryData g;
+-    size_t readLen = prefs.getBytes(GALLERY_NVS_KEY, &g, sizeof(GalleryData));
+-    if (readLen != sizeof(GalleryData)) {
+-        g.init();
+-    }
+-    prefs.putBytes(slotGalleryKey(slot), &g, sizeof(GalleryData));
++bool SaveManager::slotHasData(uint8_t slot) const {
++    if(slot>=SAVE_SLOT_COUNT)return false;
++    const char* newer[3]={"s0_v10","s1_v10","s2_v10"};
++    return prefs.isKey(HDR_KEYS[slot])||prefs.isKey(DATA_KEYS[slot])||prefs.isKey(GALLERY_KEYS[slot])||prefs.isKey(newer[slot]);
++}
++bool SaveManager::slotWritable(uint8_t slot) {
++    if(slot>=SAVE_SLOT_COUNT||slot==_frozenOwner)return false;
++    if(!slotHasData(slot))return true;
++    PetState pet;return loadSlot(slot,pet)==SAVE_OK;
+ }
+ 
+ uint8_t SaveManager::getOldestSlot() {
+     // 在当前活动槽对中找 sequence 最小的槽 (空槽 sequence=0, 优先被覆写)
+     uint32_t minSeq = UINT32_MAX;
+-    uint8_t oldest = 0;
++    uint8_t oldest = 0xff;
+ 
+     for (uint8_t i = 0; i < SAVE_SLOT_COUNT; i++) {
+-        if (!isSlotActive(i)) continue;
++        if (!isSlotActive(i)||!slotWritable(i)) continue;
+         SaveHeader hdr;
+         uint32_t seq = 0;
+         if (readSlotHeader(i, hdr)) {
+@@ -613,7 +675,7 @@ uint8_t SaveManager::getOldestSlot() {
+ }
+ 
+ uint8_t SaveManager::getSaveTargetSlot() {
+-    if (_stickyWriteSlot < SAVE_SLOT_COUNT)
++    if (_stickyWriteSlot < SAVE_SLOT_COUNT&&slotWritable(_stickyWriteSlot))
+         return _stickyWriteSlot;
+     return getOldestSlot();
+ }
+@@ -637,30 +699,56 @@ bool SaveManager::verifyWrittenSlot(uint8_t slot, uint32_t saveTime, uint32_t ex
+ }
+ 
+ bool SaveManager::hasSave() {
+-    if (!_initialized) return false;
+-    for (uint8_t i = 0; i < SAVE_SLOT_COUNT; i++) {
+-        SaveHeader hdr;
+-        if (readSlotHeader(i, hdr)) return true;
+-    }
+-    return false;
++    if(!_initialized)return false;
++    for(uint8_t slot=0;slot<SAVE_SLOT_COUNT;++slot)if(slotHasData(slot))return true;
++    for(const auto key:{"gallery","dev_state","gallery_v10","device_v10"})if(prefs.isKey(key))return true;
++    return operationPending();
++}
++
++bool SaveManager::operationPending() const {
++    if(!prefs.isKey("repair_guard"))return false;
++    uint8_t bytes[6];
++    if(prefs.getBytesLength("repair_guard")!=sizeof(bytes)||prefs.getBytes("repair_guard",bytes,sizeof(bytes))!=sizeof(bytes))return true;
++    uint16_t sum=0xffff;
++    for(unsigned i=0;i<4;++i){sum^=bytes[i];sum=uint16_t((sum<<3)|(sum>>13));sum+=bytes[i];}
++    return bytes[0]!=0xa7||bytes[3]!=1||bytes[4]!=uint8_t(sum)||bytes[5]!=uint8_t(sum>>8)||bytes[1]!=0||bytes[2]!=255;
++}
++SaveResult SaveManager::beginOperation(uint8_t owner) {
++    if(!_initialized||operationPending()||(owner>=3&&owner!=255))return SAVE_ERR_CORRUPTED;
++    uint8_t bytes[6]={0xa7,1,owner,1,0,0};const auto sum=calcChecksum(bytes,4);
++    bytes[4]=uint8_t(sum);bytes[5]=uint8_t(sum>>8);
++    if(prefs.putBytes("repair_guard",bytes,sizeof(bytes))!=sizeof(bytes)){requireRecovery();return SAVE_ERR_WRITE;}
++    _frozenOwner=owner;_operation=true;_recoveryRequired=false;return SAVE_OK;
++}
++SaveResult SaveManager::finishOperation() {
++    if(!_operation)return SAVE_ERR_CORRUPTED;
++    DeviceState device;const auto result=loadDeviceState(device);
++    if(result!=SAVE_OK)return result;
++    uint8_t bytes[6]={0xa7,0,255,1,0,0};const auto sum=calcChecksum(bytes,4);
++    bytes[4]=uint8_t(sum);bytes[5]=uint8_t(sum>>8);
++    if(prefs.putBytes("repair_guard",bytes,sizeof(bytes))!=sizeof(bytes)){requireRecovery();return SAVE_ERR_WRITE;}
++    _operation=false;_frozenOwner=device.is_visiting?device.owner_frozen_slot:255;
++    return SAVE_OK;
+ }
+ 
+ SaveResult SaveManager::erase() {
+     if (!_initialized) return SAVE_ERR_NVS_INIT;
+ 
+-    prefs.clear();
++    if(!prefs.clear())return SAVE_ERR_WRITE;
++    _recoveryRequired=false;_operation=false;_frozenOwner=255;
+     _nextSequence = 1;
+     _stickyWriteSlot = 0xFF;
+     _activeSlotA = 0;
+     _activeSlotB = 1;
+-    persistActivePairConfig();
+-    Serial.println("[Save] All save data erased");
+-    Serial.println("[Save] Active slots reset to default: 0,1");
++    if(persistActivePairConfig()!=SAVE_OK){requireRecovery();return SAVE_ERR_WRITE;}
++    saveio::log.println("[Save] All save data erased");
++    saveio::log.println("[Save] Active slots reset to default: 0,1");
+ 
+     return SAVE_OK;
+ }
+ 
+ bool SaveManager::shouldAutoSave(uint32_t currentTime) {
++    if(!_initialized||_recoveryRequired||_nextSequence==0)return false;
+     if (_lastSaveTime == 0) return true;
+     return (currentTime - _lastSaveTime) >= AUTO_SAVE_INTERVAL_SEC;
+ }
+@@ -685,31 +773,27 @@ uint16_t SaveManager::calcChecksum(const uint8_t* data, size_t len) {
+ 
+ SaveResult SaveManager::saveGallery(const GalleryData& gallery) {
+     if (!_initialized) return SAVE_ERR_NVS_INIT;
++    if(_recoveryRequired)return SAVE_ERR_CORRUPTED;
+ 
+     size_t written = prefs.putBytes(GALLERY_NVS_KEY, &gallery, sizeof(GalleryData));
+     if (written != sizeof(GalleryData)) {
+-        Serial.println("[Save] ERROR: Failed to write gallery data");
++        saveio::log.println("[Save] ERROR: Failed to write gallery data");
+         return SAVE_ERR_WRITE;
+     }
+ 
+-    Serial.printf("[Save] Gallery saved (%d bytes, %d/%d unlocked)\n",
++    saveio::log.printf("[Save] Gallery saved (%d bytes, %d/%d unlocked)\n",
+                   (int)sizeof(GalleryData), gallery.getUnlockedCount(), FORM_COUNT);
+     return SAVE_OK;
+ }
+ 
+ SaveResult SaveManager::loadGallery(GalleryData& gallery) {
+-    if (!_initialized) return SAVE_ERR_NVS_INIT;
+-
+-    size_t readLen = prefs.getBytes(GALLERY_NVS_KEY, &gallery, sizeof(GalleryData));
+-    if (readLen != sizeof(GalleryData)) {
+-        Serial.println("[Save] No gallery data found, initializing empty");
+-        gallery.init();
+-        return SAVE_ERR_NO_DATA;
+-    }
+-
+-    Serial.printf("[Save] Gallery loaded (%d/%d unlocked)\n",
+-                  gallery.getUnlockedCount(), FORM_COUNT);
+-    return SAVE_OK;
++    if(!_initialized)return SAVE_ERR_NVS_INIT;
++    if(prefs.isKey("gallery_v10"))return SAVE_ERR_VERSION_MISMATCH;
++    if(!prefs.isKey(GALLERY_NVS_KEY)){gallery.init();return SAVE_ERR_NO_DATA;}
++    uint8_t bytes[sizeof(GalleryData)];
++    if(prefs.getBytesLength(GALLERY_NVS_KEY)!=sizeof(bytes)||prefs.getBytes(GALLERY_NVS_KEY,bytes,sizeof(bytes))!=sizeof(bytes))return SAVE_ERR_CORRUPTED;
++    for(const auto value:bytes)if(value>1)return SAVE_ERR_CORRUPTED;
++    memcpy(&gallery,bytes,sizeof(bytes));return SAVE_OK;
+ }
+ 
+ // ============================================================================
+@@ -718,29 +802,27 @@ SaveResult SaveManager::loadGallery(GalleryData& gallery) {
+ 
+ SaveResult SaveManager::saveDeviceState(const DeviceState& ds) {
+     if (!_initialized) return SAVE_ERR_NVS_INIT;
++    if(_recoveryRequired)return SAVE_ERR_CORRUPTED;
+ 
+     size_t written = prefs.putBytes(DEVICE_STATE_KEY, &ds, sizeof(DeviceState));
+     if (written != sizeof(DeviceState)) {
+-        Serial.println("[Save] ERROR: Failed to write device state");
++        saveio::log.println("[Save] ERROR: Failed to write device state");
+         return SAVE_ERR_WRITE;
+     }
+ 
+-    Serial.printf("[Save] DeviceState saved (rounds=%u, visiting=%d, clock=%lu)\n",
+-                  ds.rounds, ds.is_visiting, (unsigned long)ds.device_clock_epoch);
++    saveio::log.printf("[Save] DeviceState saved (rounds=%u, visiting=%d, clock=%" PRIu32 ")\n",
++                  ds.rounds, ds.is_visiting, ds.device_clock_epoch);
+     return SAVE_OK;
+ }
+ 
+ SaveResult SaveManager::loadDeviceState(DeviceState& ds) {
+-    if (!_initialized) return SAVE_ERR_NVS_INIT;
+-
+-    size_t readLen = prefs.getBytes(DEVICE_STATE_KEY, &ds, sizeof(DeviceState));
+-    if (readLen != sizeof(DeviceState)) {
+-        Serial.println("[Save] No device state found, initializing");
+-        ds.init();
+-        return SAVE_ERR_NO_DATA;
+-    }
+-
+-    Serial.printf("[Save] DeviceState loaded (rounds=%u, visiting=%d, clock=%lu)\n",
+-                  ds.rounds, ds.is_visiting, (unsigned long)ds.device_clock_epoch);
+-    return SAVE_OK;
++    if(!_initialized)return SAVE_ERR_NVS_INIT;
++    if(prefs.isKey("device_v10"))return SAVE_ERR_VERSION_MISMATCH;
++    if(!prefs.isKey(DEVICE_STATE_KEY)){ds.init();return SAVE_ERR_NO_DATA;}
++    uint8_t bytes[sizeof(DeviceState)];
++    if(prefs.getBytesLength(DEVICE_STATE_KEY)!=sizeof(bytes)||prefs.getBytes(DEVICE_STATE_KEY,bytes,sizeof(bytes))!=sizeof(bytes))return SAVE_ERR_CORRUPTED;
++    if(bytes[offsetof(DeviceState,is_visiting)]>1)return SAVE_ERR_CORRUPTED;
++    DeviceState candidate;memcpy(&candidate,bytes,sizeof(bytes));
++    if(candidate.is_visiting&&candidate.owner_frozen_slot>=SAVE_SLOT_COUNT)return SAVE_ERR_CORRUPTED;
++    ds=candidate;return SAVE_OK;
+ }
+diff --git a/src/core/save_manager.h b/src/core/save_manager.h
+index ead9a55..3cd1bb3 100644
+--- a/src/core/save_manager.h
++++ b/src/core/save_manager.h
+@@ -54,8 +54,14 @@ public:
+     // 校验 sequence 最新的槽
+     bool verifyLatestSave(uint32_t expectedEpoch, const PetState& pet);
+ 
+-    // 是否存在至少一个有效存档
++    // 是否存在原始记录（包括损坏、未知或只有附属数据）
+     bool hasSave();
++    bool recoveryRequired() const {return _recoveryRequired;}
++    void requireRecovery(){_recoveryRequired=true;_operation=false;}
++    bool initialized() const { return _initialized; }
++    bool operationPending() const;
++    SaveResult beginOperation(uint8_t frozenOwner);
++    SaveResult finishOperation();
+ 
+     // 删除所有存档 (销毁时用)
+     SaveResult erase();
+@@ -82,27 +88,33 @@ public:
+     // 导出带图鉴的按槽快照 (完整备份)
+     SaveResult exportSlotRawWithGallery(uint8_t slot, SaveHeader& hdr, PetState& pet,
+                                         GalleryData& gallery, bool& galleryBoundToSlot);
++    SaveResult validateImport(const SaveHeader& header,const PetState& pet);
+     SaveResult importSlotRaw(uint8_t slot, const SaveHeader& hdr, const PetState& pet, bool forceNewest);
+     SaveResult loadFromSlot(uint8_t slot, PetState& pet);
+     bool getSlotStatus(uint8_t slot, SaveHeader& hdr, SaveResult& status);
+     // 将当前全局图鉴快照绑定到指定槽
+-    void syncGlobalGalleryToSlot(uint8_t slot);
++    SaveResult syncGlobalGalleryToSlot(uint8_t slot);
+ 
+     // --- 活动存档槽对配置（持久化在 NVS） ---
+-    void setActivePairForImportedBaseSlot(uint8_t baseSlot);
++    SaveResult setActivePairForImportedBaseSlot(uint8_t baseSlot);
+     // 串门专用：冻结主人最新存档到指定槽，其余两槽作为访客轮转
+-    void setActivePairForVisit(uint8_t ownerFrozenSlot);
++    SaveResult setActivePairForVisit(uint8_t ownerFrozenSlot);
+     // 串门结束：恢复主人存档的活跃槽对
+-    void setActivePairAfterVisitEnd(uint8_t ownerSlot);
++    SaveResult setActivePairAfterVisitEnd(uint8_t ownerSlot);
+ 
+     // 查询当前活跃槽对
+     uint8_t getActiveSlotA() const { return _activeSlotA; }
+     uint8_t getActiveSlotB() const { return _activeSlotB; }
+ 
+     // 直接设置活跃槽对 (用于回滚)
+-    void setActivePair(uint8_t a, uint8_t b);
++    SaveResult setActivePair(uint8_t a, uint8_t b);
+ 
+ private:
++    bool slotHasData(uint8_t slot) const;
++    bool slotWritable(uint8_t slot);
++    bool _recoveryRequired=false;
++    bool _operation=false;
++    uint8_t _frozenOwner=0xff;
+     bool _initialized = false;
+     uint32_t _lastSaveTime = 0;
+     uint32_t _nextSequence = 1;
+@@ -127,8 +139,8 @@ private:
+     bool verifyWrittenSlot(uint8_t slot, uint32_t saveTime, uint32_t expectedSeq, const PetState& pet);
+     void resyncSequenceFromNvs();
+     bool isSlotActive(uint8_t slot) const;
+-    void loadActivePairConfig();
+-    void persistActivePairConfig();
++    SaveResult loadActivePairConfig();
++    SaveResult persistActivePairConfig();
+     bool loadSlotGallery(uint8_t slot, GalleryData& gallery);
+ 
+     // 简单校验和
+diff --git a/src/core/save_workflows.cpp b/src/core/save_workflows.cpp
+new file mode 100644
+index 0000000..dc558b3
+--- /dev/null
++++ b/src/core/save_workflows.cpp
+@@ -0,0 +1,169 @@
++#include "save_workflows.h"
++#include "save_io.h"
++#include <string.h>
++#include <initializer_list>
++// 串门结束时: 对齐主人宠物的时间戳到当前设备时间
++void realignOwnerTimestamps(PetState& ownerPet, uint32_t frozenDuration) {
++    // 所有绝对时间戳 += frozenDuration, 使主人宠物的时间锚点对齐到当前设备时间
++    if (ownerPet.idle_paused_until > 0)
++        ownerPet.idle_paused_until += frozenDuration;
++    if (ownerPet.last_poke_effect_time > 0)
++        ownerPet.last_poke_effect_time += frozenDuration;
++    if (ownerPet.rhongo_timer_start > 0)
++        ownerPet.rhongo_timer_start += frozenDuration;
++    if (ownerPet.birth_timestamp > 0)
++        ownerPet.birth_timestamp += frozenDuration;
++    if (ownerPet.last_interact_time > 0)
++        ownerPet.last_interact_time += frozenDuration;
++    if (ownerPet.daily_feed.last_feed_time > 0)
++        ownerPet.daily_feed.last_feed_time += frozenDuration;
++}
++
++// 导入宠物时: 将访客/备份宠物的绝对时间戳从导出方时钟对齐到本机时钟
++// delta = localNow - donorSaveTime (有符号, 支持本机时钟在前或在后)
++// 原理: 导出方存档时 save_time 是其设备时钟, 宠物内所有绝对时间戳也基于该时钟;
++//        导入方用 (本机now - 导出方save_time) 作为偏移量, 将宠物时间锚定到本机时钟.
++// 安全护栏: |delta| > 10年 视为数据异常, 跳过对齐 (避免溢出/乱标定)
++void realignImportedTimestamps(PetState& pet, uint32_t donorSaveTime, uint32_t localNow, uint8_t localDay) {
++    if (donorSaveTime == 0) {         // 无锚点, 无法对齐; 仍重置日界
++        pet.daily_feed.reset(localDay);
++        return;
++    }
++
++    int32_t delta = (int32_t)(localNow - donorSaveTime);
++
++    // 安全护栏: |delta| > 10年 (~315M秒) 视为异常, 不做平移
++    constexpr int32_t MAX_REASONABLE_DELTA = 315360000;  // 10 * 365 * 24 * 3600
++    if (delta > MAX_REASONABLE_DELTA || delta < -MAX_REASONABLE_DELTA) {
++        saveio::log.printf("[TimeAlign] WARNING: delta=%ld sec (>10yr), skipping realignment\n", (long)delta);
++        // 即使跳过平移, 仍重置日界 (否则 daily_feed 必然错乱)
++        pet.daily_feed.reset(localDay);
++        return;
++    }
++
++    // 若 delta 很小 (< 60秒), 不值得平移, 避免无意义微调
++    if (delta > -60 && delta < 60) {
++        // 仍对齐日界
++        pet.daily_feed.reset(localDay);
++        return;
++    }
++
++    saveio::log.printf("[TimeAlign] Realigning imported pet timestamps, delta=%ld sec\n", (long)delta);
++
++    // 辅助 lambda: 对非零时间戳施加有符号偏移, 并 clamp 到 [1, localNow] 防止溢出/未来值
++    auto shiftTimestamp = [delta, localNow](uint32_t& ts) {
++        if (ts == 0) return;  // 0 = 未设置/特殊语义, 保留
++        int64_t shifted = (int64_t)ts + delta;
++        if (shifted <= 0) shifted = 1;                    // 不允许变为 0 (0 有特殊含义)
++        if (shifted > (int64_t)localNow) shifted = localNow;  // 不允许超过当前时间
++        ts = (uint32_t)shifted;
++    };
++
++    shiftTimestamp(pet.idle_paused_until);
++    shiftTimestamp(pet.last_poke_effect_time);
++    shiftTimestamp(pet.rhongo_timer_start);
++    shiftTimestamp(pet.birth_timestamp);
++    shiftTimestamp(pet.last_interact_time);
++    shiftTimestamp(pet.daily_feed.last_feed_time);
++
++    // 日界强制对齐到本机当天 (date_day 是日历日, 平移无意义, 直接 reset)
++    pet.daily_feed.reset(localDay);
++}
++
++
++namespace save_workflow {
++static SaveResult fail(SaveManager& manager,const char* operation,const char* stage,SaveResult result) {
++    manager.requireRecovery();
++    saveio::log.printf("[%s] FAILED stage=%s error=%u; recovery required; saved records preserved, automatic writes blocked\n",operation,stage,unsigned(result));
++    return result;
++}
++SaveResult persistDevice(SaveManager& manager,const DeviceState& device) {
++    const auto result=manager.saveDeviceState(device);
++    if(result!=SAVE_OK)fail(manager,"Device","dev_state",result);
++    return result;
++}
++SaveResult restoreOwner(SaveManager& manager,PetState& pet,DeviceState& device,uint32_t now,uint8_t day) {
++    if(!device.is_visiting||device.owner_frozen_slot>=SAVE_SLOT_COUNT||manager.recoveryRequired()||manager.operationPending()){
++        saveio::log.println("[Visit] Recovery required; visit and owner records preserved.");
++        return SAVE_ERR_CORRUPTED;
++    }
++    auto result=manager.beginOperation(device.owner_frozen_slot);
++    if(result!=SAVE_OK)return fail(manager,"Visit","guard",result);
++    PetState candidate;
++    result=manager.loadFromSlot(device.owner_frozen_slot,candidate);
++    if(result!=SAVE_OK)return fail(manager,"Visit","owner_unavailable",result);
++    const auto duration=(device.visit_start_epoch==0||now<device.visit_start_epoch)?0:now-device.visit_start_epoch;
++    realignOwnerTimestamps(candidate,duration);candidate.daily_feed.reset(day);
++    result=manager.setActivePairAfterVisitEnd(device.owner_frozen_slot);
++    if(result!=SAVE_OK)return fail(manager,"Visit","slot_cfg",result);
++    DeviceState nextDevice=device;
++    nextDevice.is_visiting=false;nextDevice.owner_frozen_slot=255;
++    nextDevice.visit_start_epoch=0;nextDevice.device_clock_epoch=now;
++    result=persistDevice(manager,nextDevice);
++    if(result!=SAVE_OK)return fail(manager,"Visit","dev_state",result);
++    // Keep the original owner's multi-key v9 record untouched until completion.
++    // While the owner stays frozen, save writes the companion slot with a newer
++    // sequence. Ordinary two-slot rotation resumes only after finishOperation.
++    result=manager.save(candidate,now);
++    if(result!=SAVE_OK)return fail(manager,"Visit","final_save",result);
++    result=manager.finishOperation();
++    if(result!=SAVE_OK)return fail(manager,"Visit","guard_complete",result);
++    pet=candidate;device=nextDevice;manager.markSaved(now);
++    saveio::log.printf("[Visit] Owner restored. Frozen duration: %lu sec\n",static_cast<unsigned long>(duration));
++    return SAVE_OK;
++}
++SaveResult commitImport(SaveManager& manager,PetState& pet,DeviceState& device,GalleryData& gallery,
++                        uint8_t slot,const uint8_t* bytes,size_t size,uint32_t now,uint8_t day) {
++    constexpr size_t base=sizeof(SaveHeader)+sizeof(PetState);
++    if(!bytes||(size!=base&&size!=base+sizeof(GalleryData))||slot>=SAVE_SLOT_COUNT||
++       device.is_visiting||manager.operationPending())return SAVE_ERR_CORRUPTED;
++    SaveHeader header;PetState donor;
++    memcpy(&header,bytes,sizeof(header));memcpy(&donor,bytes+sizeof(header),sizeof(donor));
++    auto result=manager.validateImport(header,donor);
++    if(result!=SAVE_OK||header.save_time==0)return result==SAVE_OK?SAVE_ERR_CORRUPTED:result;
++    const bool full=size!=base;
++    GalleryData nextGallery=gallery;
++    if(full){
++        for(size_t i=base;i<size;++i)if(bytes[i]>1)return SAVE_ERR_CORRUPTED;
++        memcpy(&nextGallery,bytes+base,sizeof(nextGallery));
++    }else nextGallery.unlock(donor.form);
++    uint8_t owner=255;
++    if(!full){
++        uint32_t seq=0;
++        for(const auto active:{manager.getActiveSlotA(),manager.getActiveSlotB()}){
++            SaveHeader saved;SaveResult status;
++            if(manager.getSlotStatus(active,saved,status)&&(owner==255||saved.sequence>seq||(saved.sequence==seq&&active<owner))){
++                owner=active;seq=saved.sequence;
++            }
++        }
++        if(owner==255||owner==slot)return SAVE_ERR_CORRUPTED;
++    }
++    result=manager.beginOperation(owner);
++    if(result!=SAVE_OK)return fail(manager,"SaveImport","guard",result);
++    result=manager.importSlotRaw(slot,header,donor,true);
++    if(result!=SAVE_OK)return fail(manager,"SaveImport","pet",result);
++    result=manager.saveGallery(nextGallery);
++    if(result!=SAVE_OK)return fail(manager,"SaveImport","gallery",result);
++    result=full?manager.setActivePairForImportedBaseSlot(slot):manager.setActivePairForVisit(owner);
++    if(result!=SAVE_OK)return fail(manager,"SaveImport","slot_cfg",result);
++    result=manager.syncGlobalGalleryToSlot(slot);
++    if(result!=SAVE_OK)return fail(manager,"SaveImport","slot_gallery",result);
++    PetState candidate;
++    result=manager.loadFromSlot(slot,candidate);
++    if(result!=SAVE_OK)return fail(manager,"SaveImport","load",result);
++    realignImportedTimestamps(candidate,header.save_time,now,day);
++    DeviceState nextDevice=device;nextDevice.rounds++;nextDevice.device_clock_epoch=now;
++    nextDevice.is_visiting=!full;nextDevice.owner_frozen_slot=full?255:owner;
++    nextDevice.visit_start_epoch=full?0:now;
++    result=persistDevice(manager,nextDevice);
++    if(result!=SAVE_OK)return fail(manager,"SaveImport","dev_state",result);
++    result=manager.save(candidate,now);
++    if(result!=SAVE_OK)return fail(manager,"SaveImport","final_save",result);
++    result=manager.finishOperation();
++    if(result!=SAVE_OK)return fail(manager,"SaveImport","guard_complete",result);
++    pet=candidate;device=nextDevice;gallery=nextGallery;manager.markSaved(now);
++    if(full)saveio::log.printf("[SaveImport] Full backup restored to slot=%u, rounds=%u\n",slot,device.rounds);
++    else saveio::log.printf("[SaveImport] Visit started: guest in slot=%u, owner frozen in slot=%u, rounds=%u\n",slot,owner,device.rounds);
++    return SAVE_OK;
++}
++}
+diff --git a/src/core/save_workflows.h b/src/core/save_workflows.h
+new file mode 100644
+index 0000000..6d81c94
+--- /dev/null
++++ b/src/core/save_workflows.h
+@@ -0,0 +1,16 @@
++#pragma once
++#include "save_manager.h"
++void realignOwnerTimestamps(PetState& pet,uint32_t duration);
++void realignImportedTimestamps(PetState& pet,uint32_t saved,uint32_t now,uint8_t day);
++namespace save_workflow {
++enum class Startup {NewGame,Loaded,Recovery};
++inline Startup loadStartup(SaveManager& manager,PetState& pet) {
++    if(!manager.initialized())return Startup::Recovery;
++    if(!manager.hasSave())return Startup::NewGame;
++    return manager.load(pet)==SAVE_OK?Startup::Loaded:Startup::Recovery;
++}
++SaveResult persistDevice(SaveManager& manager,const DeviceState& device);
++SaveResult restoreOwner(SaveManager& manager,PetState& pet,DeviceState& device,uint32_t now,uint8_t day);
++SaveResult commitImport(SaveManager& manager,PetState& pet,DeviceState& device,GalleryData& gallery,
++                        uint8_t slot,const uint8_t* bytes,size_t size,uint32_t now,uint8_t day);
++}
+diff --git a/src/core/time_manager.cpp b/src/core/time_manager.cpp
+index 7ec939a..a0f2d8e 100644
+--- a/src/core/time_manager.cpp
++++ b/src/core/time_manager.cpp
+@@ -45,14 +45,16 @@ void TimeManager::init() {
+ }
+ 
+ uint32_t TimeManager::now() {
+-    uint32_t real_elapsed_sec = (millis() - _sim_start_millis) / 1000;
++    uint32_t real_elapsed_sec = uint32_t(millis() - _sim_start_millis) / 1000;
++    _sim_start_millis += real_elapsed_sec * 1000u;
+ 
+ #if SIM_MINUTES_PER_REAL_SEC > 0
+     // 自动快进模式
+     real_elapsed_sec *= (SIM_MINUTES_PER_REAL_SEC * 60);
+ #endif
+ 
+-    return _simulated_epoch + real_elapsed_sec + _advance_offset;
++    _simulated_epoch += real_elapsed_sec;
++    return _simulated_epoch + _advance_offset;
+ }
+ 
+ TimeInfo TimeManager::getTimeInfo() {
+diff --git a/src/display/DisplayManager.cpp b/src/display/DisplayManager.cpp
+index e385f88..b0e013c 100644
+--- a/src/display/DisplayManager.cpp
++++ b/src/display/DisplayManager.cpp
+@@ -136,7 +136,7 @@ void DisplayManager::update(uint32_t nowMs) {
+     }
+ 
+     // --- Page hold 超时检测 ---
+-    if (_pageHoldActive && nowMs >= _pageHoldUntilMs) {
++    if (_pageHoldActive && int32_t(nowMs - _pageHoldUntilMs) >= 0) {
+         _pageHoldActive = false;
+         DisplayPage nextPage = _pageAfterHold;
+         // UIContext nextCtx = _contextAfterHold; // 不主动切 context, 由 switchPage 触发
+@@ -166,7 +166,7 @@ void DisplayManager::update(uint32_t nowMs) {
+     }
+ 
+     // --- Toast 超时 ---
+-    if (_model.toast[0] != '\0' && nowMs >= _model.toastUntilMs) {
++    if (_model.toast[0] != '\0' && int32_t(nowMs - _model.toastUntilMs) >= 0) {
+         _model.toast[0] = '\0';
+         markDirty();
+     }
+diff --git a/src/display/display_config.h b/src/display/display_config.h
+index 40a2caa..ea1a5be 100644
+--- a/src/display/display_config.h
++++ b/src/display/display_config.h
+@@ -10,8 +10,12 @@
+ //  显示后端选择 (只启用一个)
+ // ============================================================================
+ 
++#ifndef DISPLAY_BACKEND_SERIAL_PLACEHOLDER
+ #define DISPLAY_BACKEND_SERIAL_PLACEHOLDER  0   // Serial 占位输出 (无真实屏幕)
++#endif
++#ifndef DISPLAY_BACKEND_TFT_ESPI
+ #define DISPLAY_BACKEND_TFT_ESPI            1   // TFT_eSPI 驱动 (SSD1351 128x128)
++#endif
+ #define DISPLAY_BACKEND_LOVYANGFX           0   // LovyanGFX 驱动
+ #define DISPLAY_BACKEND_U8G2                0   // U8g2 驱动
+ 
+diff --git a/src/display/display_renderer.cpp b/src/display/display_renderer.cpp
+index 9d038e7..826b7de 100644
+--- a/src/display/display_renderer.cpp
++++ b/src/display/display_renderer.cpp
+@@ -3,6 +3,7 @@
+ // 支持多后端: Serial 占位 / TFT_eSPI (SSD1351 128x128 65K OLED)
+ 
+ #include "display_renderer.h"
++#include "DisplayManager.h"
+ #include "../config/food_table.h"
+ #include "../config/game_config.h"
+ #include "../pet/gallery.h"
+@@ -321,7 +322,6 @@ void DisplayRenderer::drawAnimNode(const AnimNode& node, uint32_t elapsedMs, con
+ #include <Adafruit_GFX.h>
+ #include <Adafruit_SSD1351.h>
+ #include <stdarg.h>
+-#include "DisplayManager.h"
+ #include "asset_loader.h"
+ #include "../presentation/animation_queue.h"
+ #include "../presentation/idle_resolver.h"
+diff --git a/src/input/button_driver.cpp b/src/input/button_driver.cpp
+index b40241b..a9f3c6f 100644
+--- a/src/input/button_driver.cpp
++++ b/src/input/button_driver.cpp
+@@ -8,6 +8,7 @@
+ ButtonDriver buttonDriver;
+ 
+ void ButtonDriver::init() {
++    _suppressUntilRelease=false;
+     for (uint8_t i = 0; i < BTN_ID_COUNT; i++) {
+         uint8_t pin = BTN_PIN_MAP[i];
+         if (BTN_ACTIVE_LOW) {
+@@ -96,6 +97,13 @@ bool ButtonDriver::isInComboCandidateWindow(uint32_t now) const {
+ }
+ 
+ void ButtonDriver::detectEvents(uint32_t now) {
++    if (_suppressUntilRelease) {
++        if (countPressedButtons()==0) {
++            _suppressUntilRelease=false;
++            for (auto& button:_buttons) {button.last_stable=false;button.press_dispatched=true;}
++        }
++        return;
++    }
+     // 如果三键组合已触发或正在持续, 屏蔽所有普通按键事件
+     if (_combo.combo_fired || (_combo.all_pressed && (now - _combo.combo_start_ms) > BTN_COMBO_CANDIDATE_MS)) {
+         return;
+@@ -214,6 +222,7 @@ uint32_t ButtonDriver::comboHoldDuration() const {
+ }
+ 
+ void ButtonDriver::resetCombo() {
++    if (_combo.all_pressed || _combo.combo_fired) _suppressUntilRelease=true;
+     _combo.all_pressed = false;
+     _combo.combo_start_ms = 0;
+     _combo.combo_fired = false;
+diff --git a/src/input/button_driver.h b/src/input/button_driver.h
+index 911c8da..7ab8070 100644
+--- a/src/input/button_driver.h
++++ b/src/input/button_driver.h
+@@ -87,6 +87,7 @@ public:
+ private:
+     ButtonState _buttons[BTN_ID_COUNT];
+     ComboState  _combo;
++    bool _suppressUntilRelease=false;
+     ButtonEvent _events[MAX_EVENTS_PER_FRAME];
+     uint8_t     _event_count;
+ 
+diff --git a/src/main.cpp b/src/main.cpp
+index fb6a2c2..ce42ce9 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -4,6 +4,7 @@
+ #include "core/game_state.h"
+ #include "core/time_manager.h"
+ #include "core/save_manager.h"
++#include "core/save_workflows.h"
+ #include "pet/feeding.h"
+ #include "pet/seriousness.h"
+ #include "pet/evolution.h"
+@@ -29,6 +30,8 @@ static PetState pet;
+ static DeviceState deviceState;
+ static char cmdBuf[64];
+ static uint8_t cmdLen = 0;
++static bool cmdDiscard=false;
++static uint32_t cmdLastActivity=0;
+ 
+ // 离线补偿: 等待设置时间 (仅首次开机/断电恢复时)
+ static bool waitingForTimeSet = false;
+@@ -44,109 +47,15 @@ struct SlotImportSession {
+     uint8_t slot = 0;
+     size_t received = 0;
+     uint8_t invalidCount = 0;
++    uint32_t lastActivity = 0;
+     uint8_t raw[SLOT_RAW_MAX_BYTES];
+ };
+ static SlotImportSession g_slotImport;
+-static constexpr uint8_t SAVE_IMPORT_INVALID_MAX = 5;
+-
+-// 串门结束时: 对齐主人宠物的时间戳到当前设备时间
+-static void realignOwnerTimestamps(PetState& ownerPet, uint32_t frozenDuration) {
+-    // 所有绝对时间戳 += frozenDuration, 使主人宠物的时间锚点对齐到当前设备时间
+-    if (ownerPet.idle_paused_until > 0)
+-        ownerPet.idle_paused_until += frozenDuration;
+-    if (ownerPet.last_poke_effect_time > 0)
+-        ownerPet.last_poke_effect_time += frozenDuration;
+-    if (ownerPet.rhongo_timer_start > 0)
+-        ownerPet.rhongo_timer_start += frozenDuration;
+-    if (ownerPet.birth_timestamp > 0)
+-        ownerPet.birth_timestamp += frozenDuration;
+-    if (ownerPet.last_interact_time > 0)
+-        ownerPet.last_interact_time += frozenDuration;
+-    if (ownerPet.daily_feed.last_feed_time > 0)
+-        ownerPet.daily_feed.last_feed_time += frozenDuration;
+-}
+-
+-// 导入宠物时: 将访客/备份宠物的绝对时间戳从导出方时钟对齐到本机时钟
+-// delta = localNow - donorSaveTime (有符号, 支持本机时钟在前或在后)
+-// 原理: 导出方存档时 save_time 是其设备时钟, 宠物内所有绝对时间戳也基于该时钟;
+-//        导入方用 (本机now - 导出方save_time) 作为偏移量, 将宠物时间锚定到本机时钟.
+-// 安全护栏: |delta| > 10年 视为数据异常, 跳过对齐 (避免溢出/乱标定)
+-static void realignImportedTimestamps(PetState& pet, uint32_t donorSaveTime, uint32_t localNow, uint8_t localDay) {
+-    if (donorSaveTime == 0) {         // 无锚点, 无法对齐; 仍重置日界
+-        pet.daily_feed.reset(localDay);
+-        return;
+-    }
+-
+-    int32_t delta = (int32_t)(localNow - donorSaveTime);
+-
+-    // 安全护栏: |delta| > 10年 (~315M秒) 视为异常, 不做平移
+-    constexpr int32_t MAX_REASONABLE_DELTA = 315360000;  // 10 * 365 * 24 * 3600
+-    if (delta > MAX_REASONABLE_DELTA || delta < -MAX_REASONABLE_DELTA) {
+-        Serial.printf("[TimeAlign] WARNING: delta=%ld sec (>10yr), skipping realignment\n", (long)delta);
+-        // 即使跳过平移, 仍重置日界 (否则 daily_feed 必然错乱)
+-        pet.daily_feed.reset(localDay);
+-        return;
+-    }
+-
+-    // 若 delta 很小 (< 60秒), 不值得平移, 避免无意义微调
+-    if (delta > -60 && delta < 60) {
+-        // 仍对齐日界
+-        pet.daily_feed.reset(localDay);
+-        return;
+-    }
+-
+-    Serial.printf("[TimeAlign] Realigning imported pet timestamps, delta=%ld sec\n", (long)delta);
+-
+-    // 辅助 lambda: 对非零时间戳施加有符号偏移, 并 clamp 到 [1, localNow] 防止溢出/未来值
+-    auto shiftTimestamp = [delta, localNow](uint32_t& ts) {
+-        if (ts == 0) return;  // 0 = 未设置/特殊语义, 保留
+-        int64_t shifted = (int64_t)ts + delta;
+-        if (shifted <= 0) shifted = 1;                    // 不允许变为 0 (0 有特殊含义)
+-        if (shifted > (int64_t)localNow) shifted = localNow;  // 不允许超过当前时间
+-        ts = (uint32_t)shifted;
+-    };
+-
+-    shiftTimestamp(pet.idle_paused_until);
+-    shiftTimestamp(pet.last_poke_effect_time);
+-    shiftTimestamp(pet.rhongo_timer_start);
+-    shiftTimestamp(pet.birth_timestamp);
+-    shiftTimestamp(pet.last_interact_time);
+-    shiftTimestamp(pet.daily_feed.last_feed_time);
+-
+-    // 日界强制对齐到本机当天 (date_day 是日历日, 平移无意义, 直接 reset)
+-    pet.daily_feed.reset(localDay);
+-}
+-
+-// 串门冻结时长 (秒); 时钟回调时避免无符号下溢
+-static uint32_t visitOwnerFrozenElapsedSec(uint32_t now) {
+-    if (deviceState.visit_start_epoch == 0 || now < deviceState.visit_start_epoch)
+-        return 0;
+-    return now - deviceState.visit_start_epoch;
+-}
+-
+-// 保存设备态到 NVS (便捷函数)
+-static void persistDeviceState() {
+-    saveManager.saveDeviceState(deviceState);
+-}
++static constexpr uint32_t MAX_OFFLINE_SECONDS=366u*86400u;
+ 
+-// 主人冻结槽不可读: 清除串门态, 将内存中的访客按一次正常 destroy 收敛为新宠物并持久化
+-// (按键结束串门与串口 reset 在同种灾难下共用, 避免 RAM 仍为访客而 is_visiting 已假)
+-static void endVisitDiscardOwnerSlotUseGuestAsReset(uint32_t now) {
+-    saveManager.setActivePairAfterVisitEnd(deviceState.owner_frozen_slot);
+-    deviceState.is_visiting = false;
+-    deviceState.owner_frozen_slot = 0xFF;
+-    deviceState.visit_start_epoch = 0;
+-    deviceState.device_clock_epoch = now;
+-    persistDeviceState();
+-    evolutionSystem.destroy(pet, now);
+-    deviceState.rounds++;
+-    persistDeviceState();
+-    if (gallerySystem.unlockForm(pet.form)) {
+-        saveManager.saveGallery(gallerySystem.getData());
+-    }
+-    feedingSystem.resetDaily(pet, timeManager.getDay());
+-    SaveResult r = saveManager.save(pet, now);
+-    if (r == SAVE_OK) saveManager.markSaved(now);
++// Shared persistence policy: failures lock writes instead of pretending success.
++static SaveResult persistDeviceState() {
++    return save_workflow::persistDevice(saveManager,deviceState);
+ }
+ 
+ // deep sleep 计时基准（RTC 慢时钟在 deep sleep 期间仍会继续走）
+@@ -224,7 +133,8 @@ static void showWhiteRhongoJustEntered(Form formBefore, int16_t srAfter) {
+ }
+ 
+ void printStatus();
+-void skipTime(uint32_t offlineSeconds);
++bool skipTime(uint32_t offlineSeconds);
++static bool confirmTime(uint16_t year,uint8_t month,uint8_t day,uint8_t hour,uint8_t minute,uint32_t requestedEpoch=0);
+ static void printStatusForSnapshot(const PetState& p, uint32_t epochNow);
+ 
+ static int hexNibble(char c) {
+@@ -365,33 +275,7 @@ static UICallbacks gameCallbacks = {
+ 
+         // 串门结束: 恢复主人宠物
+         if (deviceState.is_visiting) {
+-            PetState ownerPet;
+-            SaveResult lr = saveManager.loadFromSlot(deviceState.owner_frozen_slot, ownerPet);
+-            if (lr == SAVE_OK) {
+-                uint32_t now = timeManager.now();
+-                uint32_t frozenDuration = visitOwnerFrozenElapsedSec(now);
+-                realignOwnerTimestamps(ownerPet, frozenDuration);
+-                ownerPet.daily_feed.reset(timeManager.getDay());
+-                pet = ownerPet;
+-
+-                saveManager.setActivePairAfterVisitEnd(deviceState.owner_frozen_slot);
+-                deviceState.is_visiting = false;
+-                deviceState.owner_frozen_slot = 0xFF;
+-                deviceState.visit_start_epoch = 0;
+-                deviceState.device_clock_epoch = now;
+-                persistDeviceState();
+-
+-                SaveResult r = saveManager.save(pet, now);
+-                if (r == SAVE_OK) saveManager.markSaved(now);
+-                Serial.printf("[Visit] Owner restored via button destroy. Frozen: %lu sec\n",
+-                              (unsigned long)frozenDuration);
+-            } else {
+-                Serial.printf("[Visit] CRITICAL: Failed to restore owner from slot %u (err=%d). "
+-                              "Force-ending visit, guest reset as new pet.\n",
+-                              deviceState.owner_frozen_slot, (int)lr);
+-                uint32_t now = timeManager.now();
+-                endVisitDiscardOwnerSlotUseGuestAsReset(now);
+-            }
++            save_workflow::restoreOwner(saveManager,pet,deviceState,timeManager.now(),timeManager.getDay());
+         }
+     },
+     // onDestroyCancelled
+@@ -445,51 +329,55 @@ static UICallbacks gameCallbacks = {
+     },
+     // onInitialTimeConfirm
+     [](uint16_t year, uint8_t month, uint8_t day, uint8_t hour, uint8_t minute) {
+-        uint32_t timestamp = timeManager.timeInfoToEpoch(year, month, day, hour, minute, 0);
+-        waitingForTimeSet = false;
+-
+-        // 离线补偿: 用上次关机前的设备时间 vs 用户确认的当前时间
+-        uint32_t lastDeviceClock = deviceState.device_clock_epoch;
+-
+-        if (!reinitPetAfterInitialTimeConfirm && lastDeviceClock > 0 && timestamp > lastDeviceClock) {
+-            uint32_t offlineDuration = timestamp - lastDeviceClock;
+-            Serial.printf("[Offline] Duration: %lu seconds (%.1f days)\n",
+-                          offlineDuration, (float)offlineDuration / 86400.0f);
+-            // 先回到上次设备时间, 再补算离线时长
+-            TimeInfo base = timeManager.epochToTimeInfo(lastDeviceClock);
+-            timeManager.setSimulatedTime(base.year, base.month, base.day, base.hour, base.minute);
+-            // 访客宠物正常接受离线补偿 (主人冻结在槽内不受影响)
+-            skipTime(offlineDuration);
+-        } else {
+-            timeManager.setSimulatedTime(year, month, day, hour, minute);
+-            if (!reinitPetAfterInitialTimeConfirm) {
+-                Serial.println("[Offline] No compensation needed (no device clock or time went backwards).");
+-            }
+-        }
+-
+-        // 更新设备时间
+-        deviceState.device_clock_epoch = timeManager.now();
+-        persistDeviceState();
+-
+-        if (reinitPetAfterInitialTimeConfirm) {
+-            pet.initNew(timeManager.now());
+-            gallerySystem.unlockForm(pet.form);
+-            reinitPetAfterInitialTimeConfirm = false;
+-            Serial.println("[Main] Reinitialized new pet with confirmed initial time.");
+-        }
+-
+-        // 设时后立即存档
+-        uint32_t nowEpoch = timeManager.now();
+-        SaveResult r = saveManager.save(pet, nowEpoch);
+-        if (r == SAVE_OK) saveManager.markSaved(nowEpoch);
+-
+-        menuController.switchContext(UI_IDLE);
+-        DisplayManager::showSystemReady();
+-        Serial.println("[Main] Initial time confirmed, entering normal operation.");
+-        printStatus();
++        confirmTime(year,month,day,hour,minute);
+     }
+ };
+ 
++// Time setup uses the original v9 recovery guard, including offline writes.
++static bool confirmTime(uint16_t year,uint8_t month,uint8_t day,uint8_t hour,uint8_t minute,uint32_t requestedEpoch) {
++    if(!saveManager.initialized()||saveManager.recoveryRequired()||saveManager.operationPending()) {
++        Serial.println("[Time] FAILED: storage unavailable/recovery required; saved records preserved.");
++        return false;
++    }
++    const auto oldPet=pet;const auto oldDevice=deviceState;
++    const auto oldGallery=gallerySystem.getData();const auto oldClock=timeManager;
++    const uint32_t timestamp=timeManager.timeInfoToEpoch(year,month,day,hour,minute,0);
++    const uint32_t last=deviceState.device_clock_epoch;
++    const bool wasWaiting=waitingForTimeSet;
++    const uint32_t duration=(wasWaiting&&!reinitPetAfterInitialTimeConfirm&&last&&timestamp>last)?timestamp-last:0;
++    if(duration>MAX_OFFLINE_SECONDS||uint32_t(pet.age_days)+duration/86400u>UINT16_MAX) {
++        Serial.println("[Time] FAILED: offline/age capacity exceeded; no changes applied.");return false;
++    }
++    auto result=saveManager.beginOperation(deviceState.is_visiting?deviceState.owner_frozen_slot:255);
++    auto failed=[&](){
++        saveManager.requireRecovery();pet=oldPet;deviceState=oldDevice;
++        gallerySystem.getData()=oldGallery;timeManager=oldClock;
++        animQueue.clear();DisplayManager::stopAnimation();
++        DisplayManager::showToast("Recovery: export then erase",5000);
++        Serial.println("[Time] FAILED: persistence incomplete; recovery required, normal operation blocked.");
++        return false;
++    };
++    if(result!=SAVE_OK)return failed();
++    if(duration){
++        const auto base=timeManager.epochToTimeInfo(last);
++        timeManager.setSimulatedTime(base.year,base.month,base.day,base.hour,base.minute);
++        if(!skipTime(duration))return failed();
++    }else timeManager.setSimulatedTime(year,month,day,hour,minute);
++    deviceState.device_clock_epoch=(!wasWaiting&&requestedEpoch)?requestedEpoch:timeManager.now();
++    if(reinitPetAfterInitialTimeConfirm){pet.initNew(timeManager.now());gallerySystem.unlockForm(pet.form);}
++    result=saveManager.saveGallery(gallerySystem.getData());
++    if(result!=SAVE_OK)return failed();
++    result=persistDeviceState();if(result!=SAVE_OK)return failed();
++    const auto now=timeManager.now();result=saveManager.save(pet,now);
++    if(result!=SAVE_OK)return failed();
++    result=saveManager.finishOperation();if(result!=SAVE_OK)return failed();
++    waitingForTimeSet=false;reinitPetAfterInitialTimeConfirm=false;saveManager.markSaved(now);
++    if(wasWaiting){menuController.switchContext(UI_IDLE);DisplayManager::showSystemReady();
++        Serial.println("[Main] Initial time confirmed, entering normal operation.");}
++    else Serial.println("[Time] System time saved.");
++    printStatus();return true;
++}
++
+ // ============================================================================
+ //  Serial command processing
+ // ============================================================================
+@@ -691,7 +579,8 @@ void printHelp() {
+     Serial.println("===============================");
+ }
+ 
+-void doDayEnd() {
++bool doDayEnd() {
++    if(pet.age_days==UINT16_MAX){Serial.println("[DayEnd] REJECTED: age capacity exhausted.");return false;}
+     Serial.println("[DayEnd] --- Processing ---");
+     DisplayManager::showDayEndStart();
+     uint32_t now = timeManager.now();
+@@ -728,7 +617,7 @@ void doDayEnd() {
+         } else {
+             Serial.printf("[DayEnd] WARN: save failed (%d)\n", (int)dR);
+         }
+-        return;
++        return dR==SAVE_OK;
+     }
+ 
+     DayEndOutcome fO = feedingSystem.processDayEnd(pet);
+@@ -778,6 +667,7 @@ void doDayEnd() {
+     } else {
+         Serial.printf("[DayEnd] WARN: save failed (%d)\n", (int)dR);
+     }
++    return dR==SAVE_OK;
+ }
+ 
+ void doReset() {
+@@ -788,44 +678,9 @@ void doReset() {
+ 
+     // === 串门结束逻辑 ===
+     if (deviceState.is_visiting) {
+-        Serial.println("[Visit] Guest pet destroyed -> visit ended, restoring owner.");
+-        // 从冻结槽恢复主人宠物
+-        PetState ownerPet;
+-        SaveResult lr = saveManager.loadFromSlot(deviceState.owner_frozen_slot, ownerPet);
+-        if (lr != SAVE_OK) {
+-            Serial.printf("[Visit] CRITICAL: Failed to load owner from slot %u (err=%d). "
+-                          "Force-ending visit, starting fresh.\n",
+-                          deviceState.owner_frozen_slot, (int)lr);
+-            endVisitDiscardOwnerSlotUseGuestAsReset(now);
+-            printStatus();
+-            return;
+-        } else {
+-            // 计算冻结时长并对齐时间戳
+-            uint32_t frozenDuration = visitOwnerFrozenElapsedSec(now);
+-            realignOwnerTimestamps(ownerPet, frozenDuration);
+-            // 串门结束: 完整重置当日投喂状态, 避免跨日计数/窗口不一致
+-            ownerPet.daily_feed.reset(timeManager.getDay());
+-
+-            pet = ownerPet;
+-
+-            // 恢复活跃槽对
+-            saveManager.setActivePairAfterVisitEnd(deviceState.owner_frozen_slot);
+-
+-            // 更新设备态
+-            deviceState.is_visiting = false;
+-            deviceState.owner_frozen_slot = 0xFF;
+-            deviceState.visit_start_epoch = 0;
+-            deviceState.device_clock_epoch = now;
+-            persistDeviceState();
+-
+-            // 立即存档 (不触发离线补偿)
+-            SaveResult r = saveManager.save(pet, now);
+-            if (r == SAVE_OK) saveManager.markSaved(now);
+-
+-            Serial.printf("[Visit] Owner restored. Frozen duration: %lu sec\n", (unsigned long)frozenDuration);
+-            printStatus();
+-            return;
+-        }
++        save_workflow::restoreOwner(saveManager,pet,deviceState,now,timeManager.getDay());
++        printStatus();
++        return;
+     }
+ 
+     // === 正常 reset 逻辑 ===
+@@ -884,10 +739,14 @@ void doReset() {
+ //  离线时间补偿 - 模拟离线期间经过的天数
+ // ============================================================================
+ 
+-void skipTime(uint32_t offlineSeconds) {
++bool skipTime(uint32_t offlineSeconds) {
++    if(offlineSeconds>MAX_OFFLINE_SECONDS||uint32_t(pet.age_days)+offlineSeconds/86400u>UINT16_MAX||
++       uint64_t(timeManager.now())+offlineSeconds>UINT32_MAX) {
++        Serial.println("[Offline] REJECTED: offline/age/time capacity exceeded; no changes applied.");return false;
++    }
+     if (offlineSeconds < 60) {
+         Serial.println("[Offline] Less than 1 minute offline, no compensation needed.");
+-        return;
++        return true;
+     }
+ 
+     uint32_t offlineDays = offlineSeconds / 86400;
+@@ -897,7 +756,7 @@ void skipTime(uint32_t offlineSeconds) {
+ 
+     // 逐天结算 (与 d 命令等效)
+     for (uint32_t i = 0; i < offlineDays; i++) {
+-        doDayEnd();
++        if(!doDayEnd())return false;
+         timeManager.advanceDays(1);
+         timeManager.checkNewDay();  // 消耗 newDay 标记
+     }
+@@ -948,9 +807,20 @@ void skipTime(uint32_t offlineSeconds) {
+         Serial.printf("[Offline] WARN: save failed (%d)\n", (int)oR);
+     }
+     printStatus();
++    return oR==SAVE_OK;
+ }
+ 
++static void expireSerialInput() {
++    const auto now=millis();
++    if(g_slotImport.active&&uint32_t(now-g_slotImport.lastActivity)>30000){
++        g_slotImport={};Serial.println("[SaveImport] Session timeout; ABORTED.");
++    }
++    if((cmdLen||cmdDiscard)&&uint32_t(now-cmdLastActivity)>30000){
++        cmdLen=0;cmdDiscard=false;g_slotImport={};Serial.println("[Cmd] Partial line timeout; import ABORTED.");
++    }
++}
+ void processCommand(const char* cmd) {
++    expireSerialInput();
+     while (*cmd == ' ') cmd++;
+     if (strlen(cmd) == 0) return;
+ 
+@@ -1033,22 +903,25 @@ void processCommand(const char* cmd) {
+     }
+ 
+     if (strncmp(cmd, "SAVE_IMPORT_BEGIN ", 18) == 0) {
++        g_slotImport={};
+         uint8_t slot = 0;
+         if (!parseSlotArg(cmd + 18, &slot)) {
+             Serial.println("[SaveImport] Usage: SAVE_IMPORT_BEGIN <slot(0|1|2)>");
+             return;
+         }
+         // 串门期间禁止导入
+-        if (deviceState.is_visiting) {
++        if (deviceState.is_visiting || !saveManager.initialized() || saveManager.recoveryRequired() || saveManager.operationPending()) {
++            g_slotImport={};
+             Serial.println("[SaveImport] REJECTED: import forbidden during visit.");
+             return;
+         }
+         g_slotImport.active = true;
++        g_slotImport.lastActivity=millis();
+         g_slotImport.slot = slot;
+         g_slotImport.received = 0;
+         g_slotImport.invalidCount = 0;
+         memset(g_slotImport.raw, 0, sizeof(g_slotImport.raw));
+-        Serial.printf("[SaveImport] READY slot=%u target_bytes=%u (legacy=%u)\n",
++        Serial.printf("[SaveImport] READY slot=%u target_bytes=%u (legacy=%u) offset=1\n",
+                       slot, (unsigned)SLOT_RAW_WITH_GALLERY_BYTES, (unsigned)SLOT_RAW_BASE_BYTES);
+         return;
+     }
+@@ -1058,21 +931,20 @@ void processCommand(const char* cmd) {
+             Serial.println("[SaveImport] No active session. Use SAVE_IMPORT_BEGIN first.");
+             return;
+         }
+-        const char* hex = cmd + 17;
+-        size_t cap = SLOT_RAW_MAX_BYTES - g_slotImport.received;
+-        size_t wrote = 0;
+-        if (!decodeHexToBytes(hex, g_slotImport.raw + g_slotImport.received, cap, &wrote)) {
+-            Serial.println("[SaveImport] Invalid hex payload or overflow.");
+-            if (++g_slotImport.invalidCount >= SAVE_IMPORT_INVALID_MAX) {
+-                g_slotImport.active = false;
+-                g_slotImport.received = 0;
+-                g_slotImport.invalidCount = 0;
+-                Serial.println("[SaveImport] ABORTED: too many invalid payloads");
+-            }
+-            return;
++        const char* hex=cmd+17;size_t offset=g_slotImport.received;
++        if(*hex=='@'){
++            char* end=nullptr;const auto value=strtoul(hex+1,&end,10);
++            if(end==hex+1||*end!=' '||value>SLOT_RAW_MAX_BYTES){g_slotImport={};Serial.println("[SaveImport] Invalid hex payload/offset; ABORTED.");return;}
++            offset=value;hex=end+1;
+         }
+-        g_slotImport.invalidCount = 0;
+-        g_slotImport.received += wrote;
++        uint8_t decoded[SLOT_RAW_MAX_BYTES];size_t wrote=0;
++        if(!decodeHexToBytes(hex,decoded,sizeof(decoded),&wrote)||offset>g_slotImport.received||wrote>SLOT_RAW_MAX_BYTES-offset||
++           (offset<g_slotImport.received&&(wrote>g_slotImport.received-offset||memcmp(decoded,g_slotImport.raw+offset,wrote)))){
++            g_slotImport={};Serial.println("[SaveImport] Invalid hex payload/offset; ABORTED.");return;
++        }
++        if(offset==g_slotImport.received){memcpy(g_slotImport.raw+offset,decoded,wrote);g_slotImport.received+=wrote;}
++        g_slotImport.lastActivity=millis();
++
+         Serial.printf("[SaveImport] RECV %u/%u\n", (unsigned)g_slotImport.received, (unsigned)SLOT_RAW_WITH_GALLERY_BYTES);
+         return;
+     }
+@@ -1092,7 +964,8 @@ void processCommand(const char* cmd) {
+         }
+ 
+         // 串门期间禁止任何导入
+-        if (deviceState.is_visiting) {
++        if (deviceState.is_visiting || !saveManager.initialized() || saveManager.recoveryRequired() || saveManager.operationPending()) {
++            g_slotImport={};
+             Serial.println("[SaveImport] REJECTED: import forbidden during visit (串门).");
+             g_slotImport.active = false;
+             g_slotImport.received = 0;
+@@ -1100,228 +973,14 @@ void processCommand(const char* cmd) {
+             return;
+         }
+ 
+-        // 若当前在等设时且有设备时间锚点, 立即对齐 TimeManager
+-        // 必须在任何 timeManager.now() 调用之前完成, 否则后续写入的时间戳会是错误值
+-        if (waitingForTimeSet && deviceState.device_clock_epoch > 0) {
+-            TimeInfo anchor = timeManager.epochToTimeInfo(deviceState.device_clock_epoch);
+-            timeManager.setSimulatedTime(anchor.year, anchor.month, anchor.day,
+-                                         anchor.hour, anchor.minute);
+-            Serial.printf("[SaveImport] Pre-aligned TimeManager to device_clock_epoch=%lu\n",
+-                          (unsigned long)deviceState.device_clock_epoch);
+-        }
+-
+-        if (g_slotImport.received != SLOT_RAW_BASE_BYTES &&
+-            g_slotImport.received != SLOT_RAW_WITH_GALLERY_BYTES) {
+-            Serial.printf("[SaveImport] Incomplete payload: %u (expect %u or %u)\n",
+-                          (unsigned)g_slotImport.received,
+-                          (unsigned)SLOT_RAW_BASE_BYTES,
+-                          (unsigned)SLOT_RAW_WITH_GALLERY_BYTES);
+-            return;
+-        }
+-
+-        SaveHeader hdr;
+-        PetState state;
+-        memcpy(&hdr, g_slotImport.raw, sizeof(SaveHeader));
+-        memcpy(&state, g_slotImport.raw + sizeof(SaveHeader), sizeof(PetState));
+-
+-        bool isFullBackup = (g_slotImport.received == SLOT_RAW_WITH_GALLERY_BYTES);
+-
+-        // 串门模式: 在写入导入数据之前, 先确定主人最新存档槽
+-        // (importSlotRaw 会给导入槽分配最大 sequence, 之后就无法区分了)
+-        // 只在活跃槽对内扫描, 与 load() 的选择逻辑一致 (seq大者优先, 并列取槽号小者)
+-        uint8_t ownerSlotBeforeImport = 0;
+-        if (!isFullBackup) {
+-            uint32_t maxSeq = 0;
+-            bool found = false;
+-            uint8_t slotA = saveManager.getActiveSlotA();
+-            uint8_t slotB = saveManager.getActiveSlotB();
+-            uint8_t activeSlots[2] = { slotA, slotB };
+-            for (uint8_t idx = 0; idx < 2; idx++) {
+-                uint8_t i = activeSlots[idx];
+-                SaveHeader sh;
+-                SaveResult st;
+-                if (saveManager.getSlotStatus(i, sh, st)) {
+-                    // seq 更大, 或 seq 相同但槽号更小 (与 load 排序一致)
+-                    if (!found || sh.sequence > maxSeq ||
+-                        (sh.sequence == maxSeq && i < ownerSlotBeforeImport)) {
+-                        maxSeq = sh.sequence;
+-                        ownerSlotBeforeImport = i;
+-                        found = true;
+-                    }
+-                }
+-            }
+-
+-            // 活跃对内无有效存档, 无法确定主人槽
+-            if (!found) {
+-                Serial.println("[SaveImport] REJECTED: no valid owner save found in active slots.");
+-                g_slotImport.active = false;
+-                g_slotImport.received = 0;
+-                g_slotImport.invalidCount = 0;
+-                return;
+-            }
+-
+-            // 若导入目标槽与主人槽相同, 拒绝导入 (会覆盖主人快照)
+-            if (g_slotImport.slot == ownerSlotBeforeImport) {
+-                Serial.printf("[SaveImport] REJECTED: target slot %u is owner's latest save. Use a different slot.\n",
+-                              g_slotImport.slot);
+-                g_slotImport.active = false;
+-                g_slotImport.received = 0;
+-                g_slotImport.invalidCount = 0;
+-                return;
+-            }
+-        }
+-
+-        // 拒绝 save_time == 0 的包: 正常导出路径不可能产生, 视为损坏或不兼容数据
+-        // 必须在 importSlotRaw 之前检查, 否则坏数据已写入 NVS 槽
+-        if (hdr.save_time == 0) {
+-            Serial.println("[SaveImport] REJECTED: save_time == 0 (corrupt or incompatible data)");
+-            g_slotImport.active = false;
+-            g_slotImport.received = 0;
+-            g_slotImport.invalidCount = 0;
+-            return;
+-        }
+-
+-        SaveResult ir = saveManager.importSlotRaw(g_slotImport.slot, hdr, state, true);
+-        if (ir != SAVE_OK) {
+-            Serial.printf("[SaveImport] FAILED (%d)\n", (int)ir);
+-            g_slotImport.active = false;
+-            g_slotImport.received = 0;
+-            g_slotImport.invalidCount = 0;
+-            return;
+-        }
+-
+-        if (isFullBackup) {
+-            // === 完整备份恢复 ===
+-            // 记录导入前活跃槽对, 失败时回滚
+-            uint8_t prevActiveA = saveManager.getActiveSlotA();
+-            uint8_t prevActiveB = saveManager.getActiveSlotB();
+-
+-            // 保留旧图鉴, 以便 loadFromSlot 失败时回滚
+-            GalleryData prevGallery = gallerySystem.getData();
+-
+-            // 覆盖全局图鉴
+-            GalleryData g;
+-            memcpy(&g, g_slotImport.raw + SLOT_RAW_BASE_BYTES, sizeof(GalleryData));
+-            SaveResult gsr = saveManager.saveGallery(g);
+-            if (gsr != SAVE_OK) {
+-                Serial.printf("[SaveImport] WARN: gallery import failed (%d)\n", (int)gsr);
+-            } else {
+-                saveManager.syncGlobalGalleryToSlot(g_slotImport.slot);
+-                gallerySystem.getData() = g;
+-                Serial.println("[SaveImport] Gallery restored from backup");
+-            }
+-
+-            // 导入完整备份: 不需要保留现有存档
+-            saveManager.setActivePairForImportedBaseSlot(g_slotImport.slot);
+-
+-            // 加载宠物
+-            SaveResult lr = saveManager.loadFromSlot(g_slotImport.slot, pet);
+-            if (lr != SAVE_OK) {
+-                Serial.printf("[SaveImport] FAILED: loadFromSlot failed (%d), rolling back\n", (int)lr);
+-                saveManager.setActivePair(prevActiveA, prevActiveB);
+-                // 回滚图鉴 (RAM + NVS + 槽位快照)
+-                gallerySystem.getData() = prevGallery;
+-                SaveResult gr = saveManager.saveGallery(prevGallery);
+-                if (gr != SAVE_OK) {
+-                    Serial.printf("[SaveImport] WARN: gallery rollback failed (%d)\n", (int)gr);
+-                }
+-                saveManager.syncGlobalGalleryToSlot(g_slotImport.slot);
+-                g_slotImport.active = false;
+-                g_slotImport.received = 0;
+-                g_slotImport.invalidCount = 0;
+-                return;
+-            }
+-
+-            // 对齐备份宠物时间戳到本机时钟 (消除导出方与本机的时钟差)
+-            {
+-                uint32_t localNow = timeManager.now();
+-                realignImportedTimestamps(pet, hdr.save_time, localNow, timeManager.getDay());
+-            }
+-
+-            // rounds +1, 继承设备时间, 不触发离线补偿
+-            deviceState.rounds++;
+-            // 对齐设备时间锚点, 防止断电后误触发离线补偿
+-            deviceState.device_clock_epoch = timeManager.now();
+-            // 强制非串门态 (防 NVS/异常态残留; 正常路径下本也为 false)
+-            deviceState.is_visiting = false;
+-            deviceState.owner_frozen_slot = 0xFF;
+-            deviceState.visit_start_epoch = 0;
+-            persistDeviceState();
+-
+-            // 立即存档对齐到当前设备时间
+-            uint32_t nowEpoch = timeManager.now();
+-            SaveResult sr = saveManager.save(pet, nowEpoch);
+-            if (sr == SAVE_OK) saveManager.markSaved(nowEpoch);
+-
+-            Serial.printf("[SaveImport] Full backup restored to slot=%u, rounds=%u\n",
+-                          g_slotImport.slot, deviceState.rounds);
+-
+-        } else {
+-            // === 仅运行态导入 (串门) ===
+-            // 保留旧图鉴, 以便 loadFromSlot 失败时回滚
+-            GalleryData prevGallery = gallerySystem.getData();
+-
+-            // 保留本地图鉴, 仅解锁导入宠物的当前形态
+-            bool unlocked = gallerySystem.unlockForm(state.form);
+-            SaveResult gsr = saveManager.saveGallery(gallerySystem.getData());
+-            if (gsr != SAVE_OK) {
+-                Serial.printf("[SaveImport] WARN: gallery save failed (%d)\n", (int)gsr);
+-            }
+-            if (unlocked) {
+-                Serial.printf("[SaveImport] Unlocked imported form: %s\n",
+-                              (state.form < FORM_COUNT) ? FORM_NAMES[state.form] : "UNKNOWN");
+-            }
+-
+-            // 使用导入前确定的主人槽 (importSlotRaw 之前扫描的结果)
+-            uint8_t ownerSlot = ownerSlotBeforeImport;
+-
+-            // 记录导入前活跃槽对, 失败时精确回滚
+-            uint8_t prevActiveA = saveManager.getActiveSlotA();
+-            uint8_t prevActiveB = saveManager.getActiveSlotB();
+-
+-            // 冻结主人槽, 其余两槽给访客
+-            saveManager.setActivePairForVisit(ownerSlot);
+-
+-            // 加载访客宠物到内存
+-            SaveResult lr = saveManager.loadFromSlot(g_slotImport.slot, pet);
+-            if (lr != SAVE_OK) {
+-                Serial.printf("[SaveImport] FAILED: loadFromSlot failed (%d), rolling back\n", (int)lr);
+-                saveManager.setActivePair(prevActiveA, prevActiveB);
+-                // 回滚图鉴
+-                gallerySystem.getData() = prevGallery;
+-                SaveResult gr = saveManager.saveGallery(prevGallery);
+-                if (gr != SAVE_OK) {
+-                    Serial.printf("[SaveImport] WARN: gallery rollback failed (%d)\n", (int)gr);
+-                }
+-                g_slotImport.active = false;
+-                g_slotImport.received = 0;
+-                g_slotImport.invalidCount = 0;
+-                return;
+-            }
+-
+-            // 对齐访客宠物时间戳到本机时钟 (消除导出方与本机的时钟差)
+-            {
+-                uint32_t localNow = timeManager.now();
+-                realignImportedTimestamps(pet, hdr.save_time, localNow, timeManager.getDay());
+-            }
+-
+-            // 设置串门状态
+-            deviceState.is_visiting = true;
+-            deviceState.owner_frozen_slot = ownerSlot;
+-            deviceState.visit_start_epoch = timeManager.now();
+-            deviceState.rounds++;
+-            // 对齐设备时间锚点
+-            deviceState.device_clock_epoch = timeManager.now();
+-            persistDeviceState();
+-
+-            // 立即存档访客宠物到活跃槽
+-            uint32_t nowEpoch = timeManager.now();
+-            SaveResult sr = saveManager.save(pet, nowEpoch);
+-            if (sr == SAVE_OK) saveManager.markSaved(nowEpoch);
+-
+-            Serial.printf("[SaveImport] Visit started: guest in slot=%u, owner frozen in slot=%u, rounds=%u\n",
+-                          g_slotImport.slot, ownerSlot, deviceState.rounds);
+-        }
++        const bool alignClock=waitingForTimeSet&&deviceState.device_clock_epoch>0;
++        const uint32_t importNow=alignClock?deviceState.device_clock_epoch:timeManager.now();
++        const auto localTime=timeManager.epochToTimeInfo(importNow);
++        const auto result=save_workflow::commitImport(saveManager,pet,deviceState,gallerySystem.getData(),
++            g_slotImport.slot,g_slotImport.raw,g_slotImport.received,importNow,localTime.day);
++        g_slotImport.active=false;g_slotImport.received=0;g_slotImport.invalidCount=0;
++        if(result!=SAVE_OK){Serial.printf("[SaveImport] FAILED (%u); records retained.\n",unsigned(result));return;}
++        if(alignClock)timeManager.setSimulatedTime(localTime.year,localTime.month,localTime.day,localTime.hour,localTime.minute);
+ 
+         // 导入成功: 取消"新游戏初始化"标志, 避免后续设时回调覆盖刚导入的宠物
+         reinitPetAfterInitialTimeConfirm = false;
+@@ -1330,13 +989,6 @@ void processCommand(const char* cmd) {
+         if (waitingForTimeSet) {
+             waitingForTimeSet = false;
+ 
+-            // TimeManager 已在 COMMIT 入口处对齐 (device_clock_epoch > 0 时)
+-            // 若 device_clock_epoch == 0 (全新设备), 以当前时钟为准写入设备态
+-            if (deviceState.device_clock_epoch == 0) {
+-                deviceState.device_clock_epoch = timeManager.now();
+-                persistDeviceState();
+-            }
+-
+             menuController.switchContext(UI_IDLE);
+             DisplayManager::showSystemReady();
+             Serial.println("[SaveImport] Exited time-setup wait after successful import.");
+@@ -1348,6 +1000,14 @@ void processCommand(const char* cmd) {
+         return;
+     }
+ 
++    if (strcmp(cmd, "erase") == 0) {
++        const auto result=saveManager.erase();
++        if(result==SAVE_OK){g_slotImport={};deviceState.init();waitingForTimeSet=true;reinitPetAfterInitialTimeConfirm=true;}
++        Serial.println(result==SAVE_OK?"[Save] Erased":"[Save] Erase FAILED; records retained where possible.");
++        DisplayManager::showToast(result==SAVE_OK?"Save erased":"Erase failed!",1500);
++        return;
++    }
++
+     // SET_TIME 命令: 设置系统时间 (离线补偿用, 任何状态下可用)
+     if (strncmp(cmd, "SET_TIME ", 9) == 0) {
+         uint32_t timestamp = strtoul(cmd + 9, nullptr, 10);
+@@ -1356,63 +1016,13 @@ void processCommand(const char* cmd) {
+             return;
+         }
+         TimeInfo t = timeManager.epochToTimeInfo(timestamp);
+-        Serial.printf("[Time] System time set to: %04d-%02d-%02d %02d:%02d:%02d\n",
+-                      t.year, t.month, t.day, t.hour, t.minute, t.second);
+-
+-        if (waitingForTimeSet) {
+-            waitingForTimeSet = false;
+-
+-            // 离线补偿: 用上次设备时间 vs 用户确认的当前时间
+-            uint32_t lastDeviceClock = deviceState.device_clock_epoch;
+-            if (!reinitPetAfterInitialTimeConfirm && lastDeviceClock > 0 && timestamp > lastDeviceClock) {
+-                uint32_t offlineDuration = timestamp - lastDeviceClock;
+-                Serial.printf("[Offline] Duration: %lu seconds (%.1f days)\n",
+-                              offlineDuration, (float)offlineDuration / 86400.0f);
+-                TimeInfo base = timeManager.epochToTimeInfo(lastDeviceClock);
+-                timeManager.setSimulatedTime(base.year, base.month, base.day, base.hour, base.minute);
+-                skipTime(offlineDuration);
+-            } else {
+-                timeManager.setSimulatedTime(t.year, t.month, t.day, t.hour, t.minute);
+-                if (!reinitPetAfterInitialTimeConfirm) {
+-                    Serial.println("[Offline] No compensation needed.");
+-                }
+-            }
+-
+-            // 更新设备时间
+-            deviceState.device_clock_epoch = timeManager.now();
+-            persistDeviceState();
+-
+-            if (reinitPetAfterInitialTimeConfirm) {
+-                pet.initNew(timeManager.now());
+-                gallerySystem.unlockForm(pet.form);
+-                reinitPetAfterInitialTimeConfirm = false;
+-                Serial.println("[Main] Reinitialized new pet with confirmed initial time.");
+-            }
+-
+-            // 设时后立即存档
+-            uint32_t nowEpoch = timeManager.now();
+-            SaveResult r = saveManager.save(pet, nowEpoch);
+-            if (r == SAVE_OK) saveManager.markSaved(nowEpoch);
+-
+-            menuController.switchContext(UI_IDLE);
+-            DisplayManager::showSystemReady();
+-            Serial.println("[Main] Time set, entering normal operation.");
+-            printStatus();
+-        } else {
+-            if (deviceState.is_visiting) {
+-                Serial.println("[Time] REJECTED: cannot change time during visit.");
+-                return;
+-            }
+-            timeManager.setSimulatedTime(t.year, t.month, t.day, t.hour, t.minute);
+-            // 更新设备时间
+-            deviceState.device_clock_epoch = timestamp;
+-            persistDeviceState();
+-        }
++        if(deviceState.is_visiting&&!waitingForTimeSet){Serial.println("[Time] REJECTED: cannot change time during visit.");return;}
++        confirmTime(t.year,t.month,t.day,t.hour,t.minute,timestamp);
+         return;
+     }
+ 
+     // 等待时间设置期间, 只允许时间设置相关和 s/h 命令
+-    if (waitingForTimeSet) {
++    if (waitingForTimeSet || saveManager.recoveryRequired() || !saveManager.initialized()) {
+         if (strcmp(cmd, "s") == 0) { printStatus(); return; }
+         if (strcmp(cmd, "s0") == 0 || strcmp(cmd, "s1") == 0 || strcmp(cmd, "s2") == 0) {
+             uint8_t slot = (uint8_t)(cmd[1] - '0');
+@@ -1496,12 +1106,7 @@ void processCommand(const char* cmd) {
+         }
+         return;
+     }
+-    if (strcmp(cmd, "erase") == 0) {
+-        saveManager.erase();
+-        Serial.println("[Save] Erased");
+-        DisplayManager::showToast("Save erased", 1500);
+-        return;
+-    }
++
+     if (strcmp(cmd, "reset") == 0) { doReset(); return; }
+     if (strcmp(cmd, "FORCE_NOBU") == 0) {
+         uint32_t now = timeManager.now();
+@@ -1764,12 +1369,15 @@ void processCommand(const char* cmd) {
+ }
+ 
+ void readSerialCommand() {
+-    while (Serial.available()) {
+-        char c = Serial.read();
+-        if (c == '\n' || c == '\r') {
+-            if (cmdLen > 0) { cmdBuf[cmdLen] = '\0'; processCommand(cmdBuf); cmdLen = 0; }
+-        } else if (cmdLen < sizeof(cmdBuf) - 1) {
+-            cmdBuf[cmdLen++] = c;
++    expireSerialInput();
++    while(Serial.available()){
++        const char c=Serial.read();cmdLastActivity=millis();
++        if(c=='\n'||c=='\r'){
++            if(cmdDiscard){cmdDiscard=false;cmdLen=0;continue;}
++            if(cmdLen){cmdBuf[cmdLen]='\0';cmdLen=0;processCommand(cmdBuf);}
++        }else if(!cmdDiscard){
++            if(cmdLen<sizeof(cmdBuf)-1)cmdBuf[cmdLen++]=c;
++            else{cmdLen=0;cmdDiscard=true;g_slotImport={};Serial.println("[Cmd] Line too long; discarded, import ABORTED.");}
+         }
+     }
+ }
+@@ -1808,8 +1416,9 @@ void setup() {
+     esp_reset_reason_t resetReason = esp_reset_reason();
+     Serial.printf("[Boot] Reset reason: %s\n", resetReasonName(resetReason));
+ 
+-    if (saveManager.hasSave()) {
+-        if (saveManager.load(pet) == SAVE_OK) {
++    const auto startup=save_workflow::loadStartup(saveManager,pet);
++    if (startup!=save_workflow::Startup::NewGame) {
++        if (startup==save_workflow::Startup::Loaded) {
+             Serial.println("[Main] Save loaded");
+             DisplayManager::showSaveLoaded();
+ 
+@@ -1883,7 +1492,7 @@ void setup() {
+                 Serial.println("[Boot] Non-power reset: restored to device clock time.");
+             }
+         } else {
+-            Serial.println("[Main] Save corrupted, new game");
++            Serial.println("[Main] Recovery required; saved records preserved, automatic writes blocked.");
+             DisplayManager::showSaveCorruptedNewGame();
+             pet.initNew(timeManager.now());
+             saveManager.loadDeviceState(deviceState);
+@@ -2029,6 +1638,9 @@ void loop() {
+     // 1. Serial commands (always active, even during time-set wait)
+     readSerialCommand();
+ 
++    if(!saveManager.initialized()||saveManager.recoveryRequired()){
++        DisplayManager::update(millis());DisplayManager::renderIfDirty();delay(10);return;
++    }
+     // 等待时间设置期间, 只处理串口命令和显示更新
+     if (waitingForTimeSet) {
+         menuController.update();
+diff --git a/tests/fixtures/v9/adult-white.full.bin b/tests/fixtures/v9/adult-white.full.bin
+new file mode 100644
+index 0000000000000000000000000000000000000000..3aab126e571a5ede626cdc4f17fd61019639dd1d
+GIT binary patch
+literal 84
+zcmd;NuwdwEWMI%@U|?YQ7@W$?$jIo)kix*iz`(%qBRCZ#mXH;c%D~FV1X9xQ#~&=l
+c%)r3F$Hc(!<7IFvBLf2?BO?O{f|M`-0KokZP5=M^
+
+literal 0
+HcmV?d00001
+
+diff --git a/tests/fixtures/v9/adult-white.pet.bin b/tests/fixtures/v9/adult-white.pet.bin
+new file mode 100644
+index 0000000000000000000000000000000000000000..44eace345d8b739ad47a24a278af9020d70c0f92
+GIT binary patch
+literal 72
+zcmd;NuwdwEWMI%@U|?YQ7@W$?$jIo)kix*iz`(%qBRCZ#mXH;c%D~FV1X9xQ#~&=l
+U%)r3F$Hc(!<7IFvBLf2?00~|XN&o-=
+
+literal 0
+HcmV?d00001
+
+diff --git a/tests/fixtures/v9/black.pet.bin b/tests/fixtures/v9/black.pet.bin
+new file mode 100644
+index 0000000000000000000000000000000000000000..772f29d5751fc88c6a1e7954a1ae5f13bfb6c7c2
+GIT binary patch
+literal 72
+zcmd;NuwdXj%D|w-z`(%pF*uczk%`fhA%%g3fq{YJM{p`gEFmi>m4TI!nUR5kq2Z4|
+WSd5v0fq{>Sf#Ju?;8aEi21Wq;Vh<Sr
+
+literal 0
+HcmV?d00001
+
+diff --git a/tests/fixtures/v9/device.bin b/tests/fixtures/v9/device.bin
+new file mode 100644
+index 0000000000000000000000000000000000000000..033bb3bfbece588c24ed03b9d6c24120320c1af3
+GIT binary patch
+literal 12
+TcmZSh7@W$^!0?}efq?-47G(mk
+
+literal 0
+HcmV?d00001
+
+diff --git a/tests/fixtures/v9/device_visit.bin b/tests/fixtures/v9/device_visit.bin
+new file mode 100644
+index 0000000000000000000000000000000000000000..7b19e2e49fc1932aa95bcb079f82a9221cbf5d20
+GIT binary patch
+literal 12
+QcmZSh7@W$^z{mii0ToUITL1t6
+
+literal 0
+HcmV?d00001
+
+diff --git a/tests/fixtures/v9/gallery.bin b/tests/fixtures/v9/gallery.bin
+new file mode 100644
+index 0000000000000000000000000000000000000000..f4e9d4e7d3de4afa5b201619d3eff20f9c77ee05
+GIT binary patch
+literal 12
+OcmZQ%WB@@15C8xGGXMnu
+
+literal 0
+HcmV?d00001
+
+diff --git a/tests/fixtures/v9/manifest.json b/tests/fixtures/v9/manifest.json
+new file mode 100644
+index 0000000..60e1378
+--- /dev/null
++++ b/tests/fixtures/v9/manifest.json
+@@ -0,0 +1,64 @@
++{
++  "source_commit": "448dbe158595c1db9f1d2fc37caa15810c53de1c",
++  "source_header_sha256": "07143287dcb3d507c3d556b97fca3b87793f342f24bf61b0031c2748940e3305",
++  "compiler": "xtensa-esp32s3-elf-g++ (crosstool-NG esp-2021r2-patch5) 8.4.0",
++  "compile_flags": [
++    "-std=gnu++17",
++    "-c"
++  ],
++  "layout": {
++    "pet_size": 56,
++    "header_size": 16,
++    "device_size": 12,
++    "daily_size": 12,
++    "pet_offsets": {
++      "form": 0,
++      "base_form": 1,
++      "alignment": 2,
++      "stage": 3,
++      "health": 4,
++      "seriousness": 6,
++      "idle_minute_remainder": 8,
++      "idle_paused_until": 12,
++      "last_poke_effect_time": 16,
++      "rhongo_timer_start": 20,
++      "is_rhongomyniad": 24,
++      "white_fun_form": 25,
++      "white_fun_form_locked": 26,
++      "mapo_tofu_count": 27,
++      "is_black_rhongomyniad": 28,
++      "is_nobu": 29,
++      "is_oda_nobunaga": 30,
++      "birth_timestamp": 32,
++      "last_interact_time": 36,
++      "age_days": 40,
++      "daily_feed": 44
++    },
++    "header_offsets": {
++      "version": 0,
++      "data_size": 2,
++      "checksum": 4,
++      "sequence": 8,
++      "save_time": 12
++    },
++    "gallery_size": 12,
++    "device_offsets": {
++      "device_clock_epoch": 0,
++      "rounds": 4,
++      "is_visiting": 6,
++      "owner_frozen_slot": 7,
++      "visit_start_epoch": 8
++    }
++  },
++  "fixtures": {
++    "adult-white.pet.bin": "4b2f02403dfdee8c4e84723eb79eaee44ab2c3c86ffd769ec72036a20db5b487",
++    "adult-white.full.bin": "b7d1a1bc37551fabec9459c27e4949c1c1fd01b69dc974a1cae215dba959ff1e",
++    "nobu.pet.bin": "031187dee18a0cedb295d6a367b6ed871f43c755c428e571d0b593a6e7771dd4",
++    "black.pet.bin": "b45b1fa86a7c857db653fb91d16e62cc2bbee525cf79c2c82ac63e677c954b36",
++    "rhongo.pet.bin": "9c35e2f6d3560e4e8c389f69b54f5fab61f1727669078d3cd22c1827979cc5f3",
++    "gallery.bin": "67de10c46e7819d40f9d4b2312288958eaf54c32c16785cea2c62381feb59202",
++    "device.bin": "7e0dca87c83cd0eb1c45fa81de01d934eb4a679f119f50a72dd9142b36ade313",
++    "device_visit.bin": "33732ca23a0342b58cb750240893200d2f5e6be5bab4d9dd9d83a986af5bff57"
++  },
++  "origin": "Static aggregate objects compiled with original firmware header and target Xtensa toolchain; checksum filled over target pet bytes using original algorithm. Gallery and DeviceState objects also use original headers and target compiler. No hardware dump; runtime padding and real NVS failures not sampled."
++}
+diff --git a/tests/fixtures/v9/nobu.pet.bin b/tests/fixtures/v9/nobu.pet.bin
+new file mode 100644
+index 0000000000000000000000000000000000000000..628d9058bc24210335b33a2dbc971570ff24d15c
+GIT binary patch
+literal 72
+zcmd;Nuwc0RhJitgfq{YHV{j@L7XyPQLka^60|NuckKk00SVC4%Dg!Gc0|O%iL&G0`
+UuoyD~0|Oru1H+G(!Kok_06owU6951J
+
+literal 0
+HcmV?d00001
+
+diff --git a/tests/fixtures/v9/rhongo.pet.bin b/tests/fixtures/v9/rhongo.pet.bin
+new file mode 100644
+index 0000000000000000000000000000000000000000..31f0a69a8fc1adba2ab1ac65f15e45d862e9b694
+GIT binary patch
+literal 72
+zcmd;Nuwb}Q#lWD&z`(%pF*ucjk&)4pA%%g3fq{YJM{p`gEFmi>m64T^38bXqk3U$9
+UnSp_UkBNcd$IIYUMg|5(02<K`jQ{`u
+
+literal 0
+HcmV?d00001
+
+diff --git a/tests/host/application_repair_test.cpp b/tests/host/application_repair_test.cpp
+new file mode 100644
+index 0000000..bf7fe10
+--- /dev/null
++++ b/tests/host/application_repair_test.cpp
+@@ -0,0 +1,180 @@
++// Actual original main and callbacks, not a reimplementation of the app.
++#define main existing_storage_test_main
++#include "save_repair_test.cpp"
++#undef main
++#include "../../src/main.cpp"
++#include <chrono>
++uint32_t hostMillis=0,hostRandom=999;int hostPins[64];HostSerial Serial;
++// No hardware power/sleep tests: only replace unrelated power notifications.
++PowerManager powerManager;
++void PowerManager::init(){}
++void PowerManager::update(uint32_t){}
++void PowerManager::onUserActivity(){}
++void PowerManager::setBrightness(uint8_t){}
++void PowerManager::setDimBrightness(uint8_t){}
++void PowerManager::setDimTimeout(uint32_t){}
++void PowerManager::setOffTimeout(uint32_t){}
++void PowerManager::saveConfig(){}
++void PowerManager::scheduleDeepSleepRetry(uint32_t,uint32_t){}
++void PowerManager::cancelDeepSleepRetry(){}
++bool PowerManager::isDeepSleepRetryDue(uint32_t) const{return false;}
++void PowerManager::onWakeFromSleep(){}
++void frame(uint32_t ms){hostMillis+=ms;menuController.update();DisplayManager::update(hostMillis);DisplayManager::renderIfDirty();}
++void click(ButtonId id){hostPins[BTN_PIN_MAP[id]]=LOW;frame(31);hostPins[BTN_PIN_MAP[id]]=HIGH;frame(31);}
++Store store;
++void prepare(){
++ store=Store{};store.attach();saveio::diagnostic=[](const char*s){output+=s;Serial.print(s);};
++ hostMillis=0;for(auto& pin:hostPins)pin=HIGH;Serial.output.clear();Serial.input.clear();
++ saveManager=SaveManager{};CHECK(saveManager.init()==SAVE_OK);
++ timeManager.init();timeManager.setSimulatedTime(2024,1,1,8,0);
++ gallerySystem.init();pet.initNew(timeManager.now());deviceState.init();
++ gallerySystem.unlockForm(pet.form);CHECK(saveManager.saveGallery(gallerySystem.getData())==SAVE_OK);
++ CHECK(saveManager.save(pet,timeManager.now())==SAVE_OK);deviceState.device_clock_epoch=timeManager.now();
++ CHECK(saveManager.saveDeviceState(deviceState)==SAVE_OK);
++ CHECK(save_workflow::loadStartup(saveManager,pet)==save_workflow::Startup::Loaded);
++ menuController.init(&pet,&deviceState,&gameCallbacks);DisplayManager::init();frame(5000);
++ waitingForTimeSet=true;reinitPetAfterInitialTimeConfirm=false;g_slotImport={};cmdLen=0;cmdDiscard=false;
++ store.track();Serial.output.clear();
++}
++void clockRollover(){prepare();auto previous=timeManager.now();for(int i=0;i<50;++i){hostMillis+=100000000;auto now=timeManager.now();CHECK(now==previous+100000);previous=now;}}
++void clockFraction(){prepare();auto before=timeManager.now();hostMillis+=999;CHECK(timeManager.now()==before);hostMillis+=1;CHECK(timeManager.now()==before+1);}
++void destroyRelease(){prepare();waitingForTimeSet=false;
++ auto chord=[](){for(auto pin:BTN_PIN_MAP)hostPins[pin]=LOW;frame(31);frame(BTN_DESTROY_HOLD_MS+1);for(auto pin:BTN_PIN_MAP)hostPins[pin]=HIGH;frame(31);};
++ auto rounds=deviceState.rounds;auto disk=store.values;chord();
++ CHECK(menuController.getCurrentContext()==UI_DESTROY_CONFIRM&&deviceState.rounds==rounds&&store.values==disk);
++ click(BTN_M);CHECK(deviceState.rounds==rounds&&menuController.getCurrentContext()==UI_IDLE);
++ chord();CHECK(menuController.getCurrentContext()==UI_DESTROY_CONFIRM);click(BTN_L);click(BTN_M);
++ CHECK(deviceState.rounds==rounds+1);disk=store.values;frame(10000);CHECK(store.values==disk);
++}
++void displayRollover(){prepare();hostMillis=UINT32_MAX-1000;DisplayManager::showFeedResult(FeedOutcome{}, pet.seriousness);hostMillis+=100;DisplayManager::update(hostMillis);
++ CHECK(DisplayManager::getCurrentPage()==PAGE_FEED_RESULT);hostMillis+=PAGE_DURATION_FEED_RESULT;DisplayManager::update(hostMillis);CHECK(DisplayManager::getCurrentPage()==PAGE_IDLE);
++ hostMillis=UINT32_MAX-100;DisplayManager::showToast("wrap",1000);hostMillis+=50;DisplayManager::update(hostMillis);CHECK(DisplayManager::getModel().toast[0]);
++ hostMillis+=950;DisplayManager::update(hostMillis);CHECK(!DisplayManager::getModel().toast[0]);
++}
++void initialTimeFailures(){
++ for(const std::string fault:{"repair_guard","gallery","dev_state","s1_hdr","s1_dat","s1_gal"}){
++  prepare();const auto before=pet;const auto device=deviceState;const auto owner=store.values["s0_dat"];
++  store.fail=fault;gameCallbacks.onInitialTimeConfirm(2024,1,1,8,0);
++  CHECK(waitingForTimeSet&&saveManager.recoveryRequired());CHECK(memcmp(&pet,&before,sizeof(pet))==0&&memcmp(&deviceState,&device,sizeof(device))==0);
++  CHECK(Serial.output.find("entering normal operation")==std::string::npos&&store.values["s0_dat"]==owner);
++  store.fail.clear();SaveManager boot;CHECK(boot.init()==SAVE_OK);
++  CHECK(save_workflow::loadStartup(boot,pet)==(fault=="repair_guard"?save_workflow::Startup::Loaded:save_workflow::Startup::Recovery));
++ }
++ prepare();store.fail="repair_guard";store.failNth=2;gameCallbacks.onInitialTimeConfirm(2024,1,1,8,0);
++ CHECK(waitingForTimeSet&&saveManager.operationPending());CHECK(Serial.output.find("entering normal operation")==std::string::npos);
++ prepare();gameCallbacks.onInitialTimeConfirm(2024,1,1,8,0);CHECK(!waitingForTimeSet&&!saveManager.operationPending());
++ SaveManager boot;CHECK(boot.init()==SAVE_OK&&save_workflow::loadStartup(boot,pet)==save_workflow::Startup::Loaded);
++}
++void capacity(){prepare();pet.age_days=UINT16_MAX;const auto before=pet;const auto disk=store.values;doDayEnd();CHECK(memcmp(&before,&pet,sizeof(pet))==0&&store.values==disk);
++ prepare();const auto beforeOffline=pet;const auto beforeDisk=store.values;skipTime(367u*86400);CHECK(memcmp(&beforeOffline,&pet,sizeof(pet))==0&&store.values==beforeDisk);
++}
++void offlineLimit(){prepare();const auto start=timeManager.now();const auto clock=std::chrono::steady_clock::now();
++ CHECK(skipTime(MAX_OFFLINE_SECONDS));CHECK(pet.age_days==366&&timeManager.now()==start+MAX_OFFLINE_SECONDS);
++ const auto ms=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-clock).count();
++ std::cout<<"MAX_OFFLINE 366 days host_ms="<<ms<<'\n';
++ prepare();pet.age_days=UINT16_MAX-1;const auto before=store.values;CHECK(!skipTime(2u*86400)&&store.values==before);
++}
++void lineProtocol(){prepare();waitingForTimeSet=false;
++ Serial.input="SAVE_IMPORT_BEGIN 1\n";readSerialCommand();CHECK(g_slotImport.active);
++ Serial.input="SAVE_IMPORT_DATA AA\n";readSerialCommand();CHECK(g_slotImport.received==1);
++ hostMillis+=30001;readSerialCommand();CHECK(!g_slotImport.active);
++ prepare();Serial.input="SAVE_IMPORT_BEGIN 1"+std::string(90,' ')+"\n";readSerialCommand();CHECK(!g_slotImport.active);
++ prepare();Serial.input="SAVE_IMPORT_";readSerialCommand();hostMillis+=30001;readSerialCommand();Serial.input="BEGIN 1\n";readSerialCommand();CHECK(!g_slotImport.active);
++}
++
++void storageBoundaries(){
++ prepare();SaveHeader header;memcpy(&header,store.values["s0_hdr"].data(),sizeof(header));
++ header.sequence=UINT32_MAX-1;store.values["s0_hdr"]=raw(header);
++ SaveManager m;CHECK(m.init()==SAVE_OK&&save_workflow::loadStartup(m,pet)==save_workflow::Startup::Loaded);
++ pet.health=73;CHECK(m.save(pet,timeManager.now())==SAVE_OK);const auto retained=store.values;
++ pet.health=81;CHECK(m.save(pet,timeManager.now())!=SAVE_OK&&!m.shouldAutoSave(timeManager.now()));CHECK(store.values==retained);
++ CHECK(m.importSlotRaw(0,header,pet,true)!=SAVE_OK&&store.values==retained);
++ SaveManager reboot;CHECK(reboot.init()==SAVE_OK&&save_workflow::loadStartup(reboot,pet)==save_workflow::Startup::Loaded&&pet.health==73);
++ prepare();const auto before=store.values;saveio::storage.open=[](void*,const char*,bool){return false;};
++ ::setup();CHECK(Serial.output.find("[Main] New game")==std::string::npos);
++ CHECK(saveManager.recoveryRequired()&&!saveManager.shouldAutoSave(timeManager.now()));
++ gameCallbacks.onInitialTimeConfirm(2024,1,2,8,0);loop();CHECK(store.values==before);
++ CHECK(Serial.output.find("entering normal operation")==std::string::npos);
++}
++void timeInterruptions(){
++ for(int cut=1;cut<=7;++cut){
++  prepare();store.cut=cut;bool interrupted=false;
++  try{gameCallbacks.onInitialTimeConfirm(2024,1,1,8,0);}catch(const PowerLoss&){interrupted=true;}
++  CHECK(interrupted);store.cut=0;SaveManager boot;CHECK(boot.init()==SAVE_OK);
++  CHECK(save_workflow::loadStartup(boot,pet)==(cut<7?save_workflow::Startup::Recovery:save_workflow::Startup::Loaded));
++  if(cut<7){const auto before=store.values;CHECK(boot.save(pet,1700000000)!=SAVE_OK&&store.values==before);}
++ }
++ prepare();store.fail="dev_state";processCommand("SET_TIME 1704096000");
++ CHECK(waitingForTimeSet&&saveManager.recoveryRequired()&&Serial.output.find("entering normal operation")==std::string::npos);
++}
++void normalSetTime(){prepare();waitingForTimeSet=false;store.fail="dev_state";
++ const auto before=pet;const auto device=deviceState;const auto clock=timeManager.now();
++ processCommand("SET_TIME 1704096005");CHECK(saveManager.recoveryRequired()&&memcmp(&pet,&before,sizeof(pet))==0&&memcmp(&deviceState,&device,sizeof(device))==0&&timeManager.now()==clock);
++ CHECK(Serial.output.find("System time saved")==std::string::npos);
++ prepare();waitingForTimeSet=false;processCommand("SET_TIME 1704096005");CHECK(deviceState.device_clock_epoch==1704096005&&timeManager.now()==1704096000);
++}
++void protocolCompletion(){
++ prepare();const auto payload=file("adult-white.full.bin");
++ Serial.input="SAVE_IMPORT_BEGIN 1\n";readSerialCommand();CHECK(g_slotImport.active);
++ for(size_t offset=0;offset<payload.size();offset+=16){
++  char buffer[64];const auto n=snprintf(buffer,sizeof(buffer),"SAVE_IMPORT_DATA @%u ",unsigned(offset));
++  size_t size=std::min(size_t(16),payload.size()-offset);
++  for(size_t i=0;i<size;++i)snprintf(buffer+n+i*2,3,"%02X",payload[offset+i]);
++  const std::string command=std::string(buffer)+"\n";
++  Serial.input=command.substr(0,10);readSerialCommand();CHECK(g_slotImport.received==offset);
++  Serial.input=command.substr(10);readSerialCommand();CHECK(g_slotImport.received==offset+size);
++  Serial.input=command;readSerialCommand();CHECK(g_slotImport.received==offset+size);
++ }
++ auto rounds=deviceState.rounds;Serial.input="SAVE_IMPORT_COMMIT\n";readSerialCommand();
++ CHECK(!g_slotImport.active&&deviceState.rounds==rounds+1&&!saveManager.operationPending());
++ const auto saved=store.values;Serial.input="SAVE_IMPORT_COMMIT\n";readSerialCommand();CHECK(store.values==saved&&deviceState.rounds==rounds+1);
++ for(const auto ending:{"SAVE_IMPORT_DATA ZZ\n","SAVE_IMPORT_COMMIT\n","SAVE_IMPORT_ABORT\n"}){
++  prepare();const auto before=store.values;Serial.input="SAVE_IMPORT_BEGIN 1\nSAVE_IMPORT_DATA AA\n";readSerialCommand();
++  Serial.input=ending;readSerialCommand();CHECK(!g_slotImport.active&&store.values==before);
++ }
++}
++
++void firstTimeSetup(){
++ for(const std::string fault:{"", "repair_guard","gallery","dev_state","s0_hdr","s0_dat","s0_gal"}){
++  prepare();store.values.clear();saveManager=SaveManager{};::setup();CHECK(waitingForTimeSet&&reinitPetAfterInitialTimeConfirm);
++  const auto before=pet;store.track();store.fail=fault;
++  gameCallbacks.onInitialTimeConfirm(2024,1,1,8,0);
++  if(fault.empty()){CHECK(!waitingForTimeSet&&!reinitPetAfterInitialTimeConfirm&&pet.birth_timestamp==timeManager.now());}
++  else{CHECK(waitingForTimeSet&&reinitPetAfterInitialTimeConfirm&&saveManager.recoveryRequired()&&memcmp(&pet,&before,sizeof(pet))==0);
++   CHECK(Serial.output.find("entering normal operation")==std::string::npos);}
++ }
++}
++void visitTimeFailure(){
++ prepare();store=Store{};saveManager=SaveManager{};seed(store,saveManager,pet,deviceState,gallerySystem.getData(),true);
++ timeManager.setSimulatedTime(2024,1,1,8,0);deviceState.device_clock_epoch=timeManager.now();deviceState.visit_start_epoch=timeManager.now();
++ CHECK(saveManager.saveDeviceState(deviceState)==SAVE_OK);
++ const auto owner=store.values["s0_dat"];const auto before=pet;const auto device=deviceState;store.fail="dev_state";
++ gameCallbacks.onInitialTimeConfirm(2024,1,2,8,0);
++ CHECK(waitingForTimeSet&&saveManager.recoveryRequired()&&deviceState.is_visiting);
++ CHECK(store.values["s0_dat"]==owner&&memcmp(&pet,&before,sizeof(pet))==0&&memcmp(&deviceState,&device,sizeof(device))==0);
++ const auto locked=store.values;hostMillis+=120000;Serial.input="btn l\n";loop();CHECK(store.values==locked&&memcmp(&pet,&before,sizeof(pet))==0);
++ store.fail.clear();SaveManager boot;CHECK(boot.init()==SAVE_OK&&save_workflow::loadStartup(boot,pet)==save_workflow::Startup::Recovery);
++}
++void manualRecovery(){
++ prepare();store.fail="s1_dat";gameCallbacks.onInitialTimeConfirm(2024,1,1,8,0);CHECK(saveManager.recoveryRequired());
++ store.fail.clear();Serial.output.clear();processCommand("SAVE_EXPORT 0");
++ std::vector<uint8_t> payload;size_t offset=0;
++ while((offset=Serial.output.find("SAVE_EXPORT_DATA ",offset))!=std::string::npos){
++  offset+=17;const auto end=Serial.output.find('\n',offset);const auto hex=Serial.output.substr(offset,end-offset);
++  uint8_t bytes[16];size_t size=0;CHECK(decodeHexToBytes(hex.c_str(),bytes,sizeof(bytes),&size));payload.insert(payload.end(),bytes,bytes+size);offset=end;
++ }
++ CHECK(payload.size()==84);const auto protectedDisk=store.values;loop();CHECK(store.values==protectedDisk);
++ processCommand("erase");CHECK(!saveManager.recoveryRequired()&&!deviceState.is_visiting);
++ processCommand("SAVE_IMPORT_BEGIN 1");
++ for(size_t i=0;i<payload.size();i+=16){char line[64];const int prefix=snprintf(line,sizeof(line),"SAVE_IMPORT_DATA @%u ",unsigned(i));
++  const auto size=std::min(size_t(16),payload.size()-i);for(size_t j=0;j<size;++j)snprintf(line+prefix+2*j,3,"%02X",payload[i+j]);processCommand(line);}
++ processCommand("SAVE_IMPORT_COMMIT");CHECK(!waitingForTimeSet&&pet.health==50&&!saveManager.operationPending());
++ SaveManager boot;CHECK(boot.init()==SAVE_OK&&save_workflow::loadStartup(boot,pet)==save_workflow::Startup::Loaded&&pet.health==50);
++}
++int main(int argc,char** argv){
++ if(argc>1&&std::string(argv[1])=="--bridge"){
++  prepare();Serial.output.clear();std::string line;
++  while(std::getline(std::cin,line)){Serial.input=line+"\n";readSerialCommand();std::cout<<Serial.output<<std::flush;Serial.output.clear();}return 0;
++ }
++ int failures=0;for(auto test:{std::pair<const char*,void(*)()>{"clockRollover",clockRollover},{"clockFraction",clockFraction},{"destroyRelease",destroyRelease},{"displayRollover",displayRollover},{"initialTimeFailures",initialTimeFailures},{"capacity",capacity},{"offlineLimit",offlineLimit},{"lineProtocol",lineProtocol},{"storageBoundaries",storageBoundaries},{"timeInterruptions",timeInterruptions},{"normalSetTime",normalSetTime},{"protocolCompletion",protocolCompletion},{"firstTimeSetup",firstTimeSetup},{"visitTimeFailure",visitTimeFailure},{"manualRecovery",manualRecovery}}){try{test.second();std::cout<<"PASS "<<test.first<<'\n';}catch(const std::exception&e){++failures;std::cerr<<"FAIL "<<test.first<<" "<<e.what()<<'\n';}}
++ std::cout<<checks<<" application assertions, failures="<<failures<<'\n';return failures?1:0;}
+diff --git a/tests/host/behavior_trace.cpp b/tests/host/behavior_trace.cpp
+new file mode 100644
+index 0000000..d59ebfb
+--- /dev/null
++++ b/tests/host/behavior_trace.cpp
+@@ -0,0 +1,110 @@
++#include "pet/evolution.h"
++#include "pet/feeding.h"
++#include "pet/seriousness.h"
++#include <iostream>
++static uint32_t randomValue = 0, randomCalls = 0;
++uint32_t esp_random() {
++    ++randomCalls;
++    return randomValue;
++}
++void emit(const char *label, const PetState &p) {
++    std::cout << label << ',' << int(p.form) << ',' << int(p.base_form) << ',' << int(p.alignment)
++              << ',' << int(p.stage) << ',' << p.health << ',' << p.seriousness << ','
++              << p.idle_minute_remainder << ',' << p.idle_paused_until << ','
++              << p.last_poke_effect_time << ',' << p.rhongo_timer_start << ',' << p.is_rhongomyniad
++              << ',' << int(p.white_fun_form) << ',' << p.white_fun_form_locked << ','
++              << int(p.mapo_tofu_count) << ',' << p.is_black_rhongomyniad << ',' << p.is_nobu << ','
++              << p.is_oda_nobunaga << ',' << p.birth_timestamp << ',' << p.last_interact_time << ','
++              << p.age_days << ',' << int(p.daily_feed.date_day) << ','
++              << int(p.daily_feed.feed_count) << ',' << p.daily_feed.last_feed_time << ','
++              << int(p.daily_feed.healthy_in_window) << ',' << int(p.daily_feed.junk_in_window)
++              << ',' << int(p.daily_feed.healthy_outside_window) << ','
++              << int(p.daily_feed.junk_outside_window) << ',' << randomCalls << '\n';
++}
++int main() {
++    constexpr uint32_t T = 1700000000;
++    PetState p{};
++    p.initNew(T);
++    p.seriousness = 50;
++    emit("init", p);
++    auto draw = feedingSystem.drawFood();
++    std::cout << "draw";
++    for (auto f : draw.food_ids)
++        std::cout << ',' << int(f);
++    std::cout << '\n';
++    uint8_t healthy[] = {0, 1, 3}, junk[] = {4, 5, 6};
++    for (int i = 0; i < 4; ++i) {
++        auto r = feedingSystem.feed(p, healthy, T + i * 1800, 8);
++        std::cout << "feed-result," << int(r.result) << ',' << r.health_from_food << ','
++                  << r.health_from_combo << ',' << r.seriousness_from_dislike << ','
++                  << r.seriousness_from_combo << '\n';
++        if (r.result == FEED_OK)
++            seriousnessSystem.onInteract(p, INTERACT_FEED, T + i * 1800);
++        emit("child-feed", p);
++    }
++    feedingSystem.resetDaily(p, 14);
++    p.age_days = 3;
++    evolutionSystem.checkChildGraduation(p);
++    emit("graduated", p);
++    p.seriousness = 50;
++    feedingSystem.feed(p, junk, T + 10000, 20);
++    seriousnessSystem.onInteract(p, INTERACT_FEED, T + 10000);
++    emit("adult-junk", p);
++    auto day = feedingSystem.processDayEnd(p);
++    if (day.missed_feed_penalty)
++        seriousnessSystem.applyMissedFeedPenalty(p);
++    emit("day-effects", p);
++    seriousnessSystem.onInteract(p, INTERACT_POKE, T + 12000);
++    emit("poke", p);
++    seriousnessSystem.onInteract(p, INTERACT_POKE, T + 13799);
++    emit("poke-cooling", p);
++    seriousnessSystem.onInteract(p, INTERACT_POKE, T + 13800);
++    emit("poke-boundary", p);
++    seriousnessSystem.onIdleBatch(p, 60, T + 17400);
++    emit("advance", p);
++    for (int sr : {0, 32, 33, 65, 66, 99, 100}) {
++        p.seriousness = sr;
++        evolutionSystem.check(p, T + 20000);
++        emit("tier", p);
++    }
++    p.seriousness = 100;
++    p.rhongo_timer_start = T;
++    seriousnessSystem.onIdleTick(p, T + 172799);
++    emit("rhongo-before", p);
++    seriousnessSystem.onIdleTick(p, T + 172800);
++    emit("rhongo-at", p);
++    evolutionSystem.destroy(p, T + 200000);
++    p.stage = STAGE_ADULT;
++    p.alignment = ALIGN_BLACK;
++    p.seriousness = 50;
++    feedingSystem.feed(p, healthy, T + 200001, 12);
++    seriousnessSystem.onInteract(p, INTERACT_FEED, T + 200001);
++    emit("black-healthy", p);
++    FeedOutcome special{};
++    special.combo_triggered = true;
++    for (int i = 0; i < 3; ++i) {
++        feedingSystem.applySpecialFood(p, special, 0);
++        evolutionSystem.checkMapoCurse(p);
++        emit("mapo", p);
++    }
++    evolutionSystem.destroyToNobu(p, T + 300000, 5);
++    emit("nobu", p);
++    special = {};
++    special.combo_triggered = true;
++    feedingSystem.applySpecialFood(p, special, 0);
++    evolutionSystem.checkNobuMapo(p);
++    emit("oda", p);
++    feedingSystem.applySpecialFood(p, special, 0);
++    emit("oda-locked", p);
++    // Stable white entertainment form consumes RNG once and remains locked.
++    evolutionSystem.destroy(p, T + 400000);
++    p.stage = STAGE_ADULT;
++    p.alignment = ALIGN_WHITE;
++    p.seriousness = 0;
++    randomValue = 1;
++    evolutionSystem.check(p, T + 400000);
++    emit("white-fun", p);
++    randomValue = 0;
++    evolutionSystem.check(p, T + 400001);
++    emit("white-fun-locked", p);
++}
+diff --git a/tests/host/check_original.py b/tests/host/check_original.py
+new file mode 100644
+index 0000000..b5be522
+--- /dev/null
++++ b/tests/host/check_original.py
+@@ -0,0 +1,30 @@
++#!/usr/bin/env python3
++"""Verify original rule/resource identity, v9 provenance and TARGET ABI."""
++import hashlib,json,os,subprocess,tempfile
++from pathlib import Path
++root=Path(__file__).resolve().parents[2]
++base='448dbe158595c1db9f1d2fc37caa15810c53de1c'
++manifest=json.loads((root/'tests/fixtures/v9/manifest.json').read_text())
++# Every existing tracked file outside the narrow repair list remains byte-identical.
++allowed={'platformio.ini','src/main.cpp','src/core/save_manager.cpp','src/core/save_manager.h','src/display/display_config.h','src/display/display_renderer.cpp','src/core/time_manager.cpp','src/display/DisplayManager.cpp','src/input/button_driver.cpp','src/input/button_driver.h','SaveManager/save_manager.py'}
++# Documentation edits are authorized for publication; rule/ABI/resource identity remains strict.
++allowed.update({'README.md','README_zh.md','README_ja.md'})
++files=subprocess.check_output(['git','ls-tree','-r','-z','--name-only',base],cwd=root,text=True).rstrip('\0').split('\0')
++for name in files:
++    if name in allowed:continue
++    expected=subprocess.check_output(['git','show',base+':'+name],cwd=root)
++    assert (root/name).read_bytes()==expected, 'unexpected original change: '+name
++assert hashlib.sha256((root/'src/core/game_state.h').read_bytes()).hexdigest()==manifest['source_header_sha256']
++for name,digest in manifest['fixtures'].items():
++    assert hashlib.sha256((root/'tests/fixtures/v9'/name).read_bytes()).hexdigest()==digest,name
++layout=manifest['layout']
++source='#include "core/game_state.h"\n#include "pet/gallery.h"\n#include <stddef.h>\n'
++for typ,key in [('PetState','pet'),('SaveHeader','header'),('DeviceState','device'),('DailyFeedState','daily'),('GalleryData','gallery')]:
++    source+=f'static_assert(sizeof({typ})=={layout[key+"_size"]},"{typ} size");\n'
++for typ,key in [('PetState','pet'),('SaveHeader','header'),('DeviceState','device')]:
++    for field,offset in layout[key+'_offsets'].items():source+=f'static_assert(offsetof({typ},{field})=={offset},"{typ}.{field}");\n'
++compiler=os.environ.get('XTENSA_CXX',str(Path.home()/'.platformio/packages/toolchain-xtensa-esp32s3/bin/xtensa-esp32s3-elf-g++'))
++with tempfile.TemporaryDirectory(prefix='original-target-abi-') as temp:
++    p=Path(temp);(p/'abi.cpp').write_text(source)
++    subprocess.run([compiler,'-std=gnu++17','-Isrc','-c',str(p/'abi.cpp'),'-o',str(p/'abi.o')],cwd=root,check=True)
++print('PASS original files outside repair scope unchanged; original v9 header, 8 target fixtures and current Xtensa ABI sizes/offsets verified')
+diff --git a/tests/host/peripherals/Arduino.h b/tests/host/peripherals/Arduino.h
+new file mode 100644
+index 0000000..6d0a8b5
+--- /dev/null
++++ b/tests/host/peripherals/Arduino.h
+@@ -0,0 +1,35 @@
++#pragma once
++// Peripheral-only test adapter. Rules, menu, button state machine, calendar,
++// display manager, serial renderer, assets and workflows are production sources.
++#include <cstdint>
++#include <cstdio>
++#include <cstdarg>
++#include <cstdlib>
++#include <cstring>
++#include <string>
++#define PROGMEM
++#define HIGH 1
++#define LOW 0
++#define INPUT_PULLUP 2
++#define INPUT_PULLDOWN 3
++extern uint32_t hostMillis;
++extern int hostPins[64];
++inline uint32_t millis(){return hostMillis;}
++inline void pinMode(uint8_t,int){}
++inline int digitalRead(uint8_t pin){return hostPins[pin];}
++inline void* ps_malloc(size_t size){return std::malloc(size);}
++inline uint16_t pgm_read_word(const void* p){return *static_cast<const uint16_t*>(p);}
++inline uint8_t pgm_read_byte(const void* p){return *static_cast<const uint8_t*>(p);}
++struct HostSerial {
++    std::string output, input;
++    void begin(int){}
++    void flush(){}
++    int available(){return int(input.size());}
++    int read(){auto c=input.front();input.erase(0,1);return c;}
++    void print(const char* text){output+=text;}
++    void println(const char* text=""){output+=text;output+='\n';}
++    void printf(const char* format,...){char buffer[512];va_list args;va_start(args,format);std::vsnprintf(buffer,sizeof(buffer),format,args);va_end(args);output+=buffer;}
++};
++extern HostSerial Serial;
++
++inline void delay(uint32_t ms){hostMillis+=ms;}
+diff --git a/tests/host/peripherals/driver/rtc_io.h b/tests/host/peripherals/driver/rtc_io.h
+new file mode 100644
+index 0000000..d2fc1bb
+--- /dev/null
++++ b/tests/host/peripherals/driver/rtc_io.h
+@@ -0,0 +1,7 @@
++#pragma once
++using gpio_num_t=int;
++inline bool rtc_gpio_is_valid_gpio(int){return true;}
++inline void rtc_gpio_hold_dis(int){}
++inline void rtc_gpio_hold_en(int){}
++inline void rtc_gpio_pullup_en(int){}
++inline void rtc_gpio_pulldown_dis(int){}
+diff --git a/tests/host/peripherals/esp32/rtc.h b/tests/host/peripherals/esp32/rtc.h
+new file mode 100644
+index 0000000..611a6da
+--- /dev/null
++++ b/tests/host/peripherals/esp32/rtc.h
+@@ -0,0 +1,3 @@
++#pragma once
++#include <cstdint>
++inline uint64_t esp_rtc_get_time_us(){return 0;}
+diff --git a/tests/host/peripherals/esp_random.h b/tests/host/peripherals/esp_random.h
+new file mode 100644
+index 0000000..9b391cb
+--- /dev/null
++++ b/tests/host/peripherals/esp_random.h
+@@ -0,0 +1,4 @@
++#pragma once
++#include <cstdint>
++extern uint32_t hostRandom;
++inline uint32_t esp_random(){return hostRandom;}
+diff --git a/tests/host/peripherals/esp_sleep.h b/tests/host/peripherals/esp_sleep.h
+new file mode 100644
+index 0000000..4ee17e9
+--- /dev/null
++++ b/tests/host/peripherals/esp_sleep.h
+@@ -0,0 +1,9 @@
++#pragma once
++#include "esp_system.h"
++#define RTC_DATA_ATTR
++enum esp_sleep_wakeup_cause_t {ESP_SLEEP_WAKEUP_UNDEFINED,ESP_SLEEP_WAKEUP_EXT0,ESP_SLEEP_WAKEUP_EXT1,ESP_SLEEP_WAKEUP_TIMER,ESP_SLEEP_WAKEUP_TOUCHPAD,ESP_SLEEP_WAKEUP_ULP,ESP_SLEEP_WAKEUP_GPIO,ESP_SLEEP_WAKEUP_UART,ESP_SLEEP_WAKEUP_WIFI,ESP_SLEEP_WAKEUP_COCPU,ESP_SLEEP_WAKEUP_COCPU_TRAP_TRIG,ESP_SLEEP_WAKEUP_BT};
++constexpr int ESP_PD_DOMAIN_RTC_PERIPH=0,ESP_PD_OPTION_ON=0,ESP_EXT1_WAKEUP_ANY_LOW=0;
++inline esp_sleep_wakeup_cause_t esp_sleep_get_wakeup_cause(){return ESP_SLEEP_WAKEUP_UNDEFINED;}
++inline int esp_sleep_pd_config(int,int){return 0;}
++inline int esp_sleep_enable_ext1_wakeup(uint64_t,int){return 0;}
++inline void esp_deep_sleep_start(){}
+diff --git a/tests/host/peripherals/esp_system.h b/tests/host/peripherals/esp_system.h
+new file mode 100644
+index 0000000..58d71e5
+--- /dev/null
++++ b/tests/host/peripherals/esp_system.h
+@@ -0,0 +1,7 @@
++#pragma once
++// Host declarations only; ESP sleep/reset are never exercised as hardware tests.
++#include <cstdint>
++using esp_err_t=int;constexpr int ESP_OK=0;
++enum esp_reset_reason_t {ESP_RST_POWERON,ESP_RST_EXT,ESP_RST_SW,ESP_RST_PANIC,ESP_RST_INT_WDT,ESP_RST_TASK_WDT,ESP_RST_WDT,ESP_RST_DEEPSLEEP,ESP_RST_BROWNOUT,ESP_RST_SDIO};
++inline esp_reset_reason_t esp_reset_reason(){return ESP_RST_POWERON;}
++inline const char* esp_err_to_name(int){return "HOST";}
+diff --git a/tests/host/run_all.py b/tests/host/run_all.py
+new file mode 100644
+index 0000000..a89d5fc
+--- /dev/null
++++ b/tests/host/run_all.py
+@@ -0,0 +1,9 @@
++#!/usr/bin/env python3
++import subprocess,sys
++from pathlib import Path
++root=Path(__file__).resolve().parents[2]
++for name in ('check_original','run_save_repair','run_behavior','run_application_repair'):
++    command=[sys.executable,f'tests/host/{name}.py'];print('+',*command,flush=True)
++    result=subprocess.run(command,cwd=root);print('EXIT',result.returncode,name,flush=True)
++    if result.returncode:raise SystemExit(result.returncode)
++print('PASS original Artoria offline regression')
+diff --git a/tests/host/run_application_repair.py b/tests/host/run_application_repair.py
+new file mode 100644
+index 0000000..a5795fe
+--- /dev/null
++++ b/tests/host/run_application_repair.py
+@@ -0,0 +1,8 @@
++#!/usr/bin/env python3
++import os,shlex,subprocess,tempfile,sys
++from pathlib import Path
++root=Path(__file__).resolve().parents[2]
++sources=['tests/host/application_repair_test.cpp','src/core/save_manager.cpp','src/core/save_io.cpp','src/core/save_workflows.cpp','src/core/time_manager.cpp']+[f'src/pet/{n}.cpp' for n in ('feeding','evolution','seriousness','gallery')]+[f'src/input/{n}.cpp' for n in ('button_driver','input_manager','menu_controller')]+[f'src/display/{n}.cpp' for n in ('DisplayManager','display_renderer','display_assets','asset_loader')]+[f'src/presentation/{n}.cpp' for n in ('animation_queue','animation_director','idle_resolver','pet_state_query')]+['src/display/generated_assets/generated_asset_data.cpp']
++with tempfile.TemporaryDirectory(prefix='original-app-') as temp:
++ command=[os.environ.get('CXX','g++'),'-std=c++17','-Wall','-Wextra','-Wno-unused-parameter','-Wno-format','-Wno-return-type','-DDISPLAY_BACKEND_SERIAL_PLACEHOLDER=1','-DDISPLAY_BACKEND_TFT_ESPI=0',*shlex.split(os.environ.get('HOST_TEST_FLAGS','')),'-Itests/host/peripherals','-Isrc',*sources,'-o',str(Path(temp)/'test')]
++ print('+',shlex.join(command),flush=True);subprocess.run(command,cwd=root,check=True);subprocess.run([str(Path(temp)/'test')],cwd=root,check=True);subprocess.run([sys.executable,'tests/host/tool_repair_test.py','--bridge',str(Path(temp)/'test')],cwd=root,check=True)
+diff --git a/tests/host/run_behavior.py b/tests/host/run_behavior.py
+new file mode 100644
+index 0000000..521a415
+--- /dev/null
++++ b/tests/host/run_behavior.py
+@@ -0,0 +1,23 @@
++#!/usr/bin/env python3
++"""Run same deterministic inputs against original/repaired production rules."""
++import difflib,os,shlex,subprocess,tempfile
++from pathlib import Path
++root=Path(__file__).resolve().parents[2]
++base='448dbe158595c1db9f1d2fc37caa15810c53de1c'
++with tempfile.TemporaryDirectory(prefix='original-behavior-') as temp:
++    temp=Path(temp);old=temp/'old';include=temp/'declarations';include.mkdir()
++    names=['src/core/game_state.h','src/config/game_config.h','src/config/food_table.h',*[f'src/pet/{name}.{suffix}' for name in ('feeding','seriousness','evolution') for suffix in ('h','cpp')]]
++    for name in names:
++        target=old/name;target.parent.mkdir(parents=True,exist_ok=True)
++        target.write_bytes(subprocess.check_output(['git','show',base+':'+name],cwd=root))
++    # Declarations for the two existing legacy dependencies only. No Arduino runtime.
++    (include/'Arduino.h').write_text('#pragma once\nstruct LogOnlySerial {template<class T> void println(T){} template<class... T> void printf(const char*,T...){} }; inline LogOnlySerial Serial;\n')
++    (include/'esp_random.h').write_text('#pragma once\n#include <stdint.h>\nuint32_t esp_random();\n')
++    traces=[]
++    for label,folder in [('baseline',old),('repaired',root)]:
++        binary=str(temp/label)
++        command=[os.environ.get('CXX','g++'),'-std=c++17','-Wall','-Wextra','-Wno-unused-parameter',*shlex.split(os.environ.get('HOST_TEST_FLAGS','')),'-I'+str(folder/'src'),'-I'+str(include),str(root/'tests/host/behavior_trace.cpp')]+[str(folder/f'src/pet/{name}.cpp') for name in ('feeding','evolution','seriousness')]+['-o',binary]
++        subprocess.run(command,cwd=root,check=True);traces.append(subprocess.check_output([binary],cwd=root,text=True))
++    if traces[0]!=traces[1]:
++        print(''.join(difflib.unified_diff(traces[0].splitlines(True),traces[1].splitlines(True))));raise SystemExit(1)
++    print('PASS',len(traces[0].splitlines()),'original/repaired production behavior traces match including all pet fields and RNG counts')
+diff --git a/tests/host/run_save_repair.py b/tests/host/run_save_repair.py
+new file mode 100644
+index 0000000..a9d8749
+--- /dev/null
++++ b/tests/host/run_save_repair.py
+@@ -0,0 +1,10 @@
++#!/usr/bin/env python3
++import os,shlex,subprocess,tempfile
++from pathlib import Path
++root=Path(__file__).resolve().parents[2]
++with tempfile.TemporaryDirectory(prefix='original-save-repair-') as temp:
++    binary=str(Path(temp)/'test')
++    command=[os.environ.get('CXX','g++'),'-std=c++17','-Wall','-Wextra','-Werror','-Wno-unused-parameter',*shlex.split(os.environ.get('HOST_TEST_FLAGS','')),'-Isrc','tests/host/save_repair_test.cpp','src/core/save_manager.cpp','src/core/save_io.cpp','src/core/save_workflows.cpp','-o',binary]
++    print('+',shlex.join(command),flush=True)
++    subprocess.run(command,cwd=root,check=True)
++    subprocess.run([binary],cwd=root,check=True)
+diff --git a/tests/host/save_repair_test.cpp b/tests/host/save_repair_test.cpp
+new file mode 100644
+index 0000000..32e9190
+--- /dev/null
++++ b/tests/host/save_repair_test.cpp
+@@ -0,0 +1,180 @@
++#include "core/save_workflows.h"
++#include "core/save_io.h"
++#include <map>
++#include <vector>
++#include <string>
++#include <algorithm>
++#include <fstream>
++#include <iterator>
++#include <iostream>
++#include <stdexcept>
++#include <cstring>
++#include <cstddef>
++static_assert(sizeof(SaveHeader)==16&&sizeof(PetState)==56&&sizeof(GalleryData)==12&&sizeof(DeviceState)==12,"host test ABI must match checked target fixture layout");
++namespace {
++int checks=0;
++#define CHECK(x) do{++checks;if(!(x))throw std::runtime_error(std::string(__func__)+":"+std::to_string(__LINE__)+" " #x);}while(false)
++struct PowerLoss{};
++std::string output;
++struct Store {
++    std::map<std::string,std::vector<uint8_t>> values;
++    bool eraseFail=false;
++    std::string fail;int failNth=1,matched=0,cut=0,writes=0;
++    std::vector<std::string> written;
++    void attach(){saveio::storage={this,
++        [](void*,const char*,bool){return true;},
++        [](void*p,const char*k){return static_cast<Store*>(p)->values.count(k)!=0;},
++        [](void*p,const char*k)->size_t{auto&m=static_cast<Store*>(p)->values;auto i=m.find(k);return i==m.end()?0:i->second.size();},
++        [](void*p,const char*k,void*b,size_t n)->size_t{auto&m=static_cast<Store*>(p)->values;auto i=m.find(k);if(i==m.end()||i->second.size()>n)return 0;memcpy(b,i->second.data(),i->second.size());return i->second.size();},
++        [](void*p,const char*k,const void*b,size_t n)->size_t{auto&s=*static_cast<Store*>(p);if(s.fail==k&&++s.matched==s.failNth)return 0;auto*d=static_cast<const uint8_t*>(b);s.values[k]={d,d+n};s.written.push_back(k);if(++s.writes==s.cut)throw PowerLoss{};return n;},
++        [](void*p){auto&s=*static_cast<Store*>(p);if(s.eraseFail)return false;s.values.clear();return true;}};}
++    void track(){fail.clear();failNth=1;matched=0;writes=0;written.clear();cut=0;output.clear();}
++};
++std::vector<uint8_t> file(const std::string& name){std::ifstream f("tests/fixtures/v9/"+name,std::ios::binary);CHECK(f.good());return {std::istreambuf_iterator<char>(f),std::istreambuf_iterator<char>()};}
++PetState fresh(){PetState p{};p.initNew(1700000000);return p;}
++uint16_t checksum(const std::vector<uint8_t>& bytes){uint16_t sum=0xffff;for(auto v:bytes){sum^=v;sum=uint16_t((sum<<3)|(sum>>13));sum+=v;}return sum;}
++template<class T>std::vector<uint8_t> raw(const T& value){const auto*p=reinterpret_cast<const uint8_t*>(&value);return {p,p+sizeof(value)};}
++void seed(Store&s,SaveManager&m,PetState&p,DeviceState&d,GalleryData&g,bool visit=false){
++    s.attach();CHECK(m.init()==SAVE_OK);p=fresh();p.health=50;
++    g.init();g.unlock(p.form);CHECK(m.saveGallery(g)==SAVE_OK);CHECK(m.save(p,1700000000)==SAVE_OK);
++    d.init();d.rounds=4;d.device_clock_epoch=1700000000;
++    if(visit){p.health=71;CHECK(m.save(p,1700000300)==SAVE_OK);CHECK(m.setActivePair(1,2)==SAVE_OK);p.health=82;CHECK(m.save(p,1700000600)==SAVE_OK);d.is_visiting=true;d.owner_frozen_slot=0;d.visit_start_epoch=1700000000;}
++    CHECK(m.saveDeviceState(d)==SAVE_OK);
++    CHECK(save_workflow::loadStartup(m,p)==save_workflow::Startup::Loaded);
++    CHECK(p.health==(visit?82:50));s.track();
++}
++void blocked(Store&s,SaveManager&m,PetState&p,DeviceState&d,GalleryData&g){
++    CHECK(m.recoveryRequired());const auto retained=s.values;
++    CHECK(!m.shouldAutoSave(1700003600));CHECK(m.save(p,1700003600)!=SAVE_OK);
++    CHECK(m.saveGallery(g)!=SAVE_OK&&m.saveDeviceState(d)!=SAVE_OK);
++    CHECK(m.loadFromSlot(0,p)!=SAVE_OK);CHECK(s.values==retained);
++}
++void startupAndUnknown(){
++    for(const std::string key:{"gallery","dev_state","gallery_v10","device_v10"})for(int kind=0;kind<4;++kind){
++        Store s;s.attach();s.values[key]=file(key.find("gallery")!=std::string::npos?"gallery.bin":"device.bin");
++        if(kind==1)s.values[key].resize(2);
++        if(kind==2)s.values[key][key=="dev_state"?6:0]=2;
++        if(kind==3)s.values[key].push_back(0);
++        const auto original=s.values[key];SaveManager m;CHECK(m.init()==SAVE_OK&&m.hasSave());
++        auto p=fresh();DeviceState d;d.init();GalleryData g;g.init();
++        CHECK(save_workflow::loadStartup(m,p)==save_workflow::Startup::Recovery);
++        const auto all=s.values;CHECK(!m.shouldAutoSave(1700000000));CHECK(m.save(p,1700000000)!=SAVE_OK);
++        CHECK(m.saveGallery(g)!=SAVE_OK&&m.saveDeviceState(d)!=SAVE_OK);CHECK(s.values==all&&s.values[key]==original);
++    }
++    for(bool newer:{false,true})for(uint8_t bad:{uint8_t(0),uint8_t(1)}){
++        Store s;SaveManager m;PetState p;DeviceState d;GalleryData g;seed(s,m,p,d,g);
++        CHECK(m.save(p,1700000300)==SAVE_OK);
++        const std::string prefix="s"+std::to_string(bad);
++        if(newer)s.values[prefix+"_v10"]={1,2,3};else s.values[prefix+"_hdr"][0]=99;
++        const auto original=s.values[prefix+"_hdr"];const auto data=s.values[prefix+"_dat"];
++        SaveManager boot;CHECK(boot.init()==SAVE_OK);CHECK(save_workflow::loadStartup(boot,p)==save_workflow::Startup::Loaded);
++        for(int i=0;i<6;++i){CHECK(boot.save(p,1700000600+i*300)==SAVE_OK);CHECK(s.values[prefix+"_hdr"]==original&&s.values[prefix+"_dat"]==data);if(newer)CHECK(s.values[prefix+"_v10"]==std::vector<uint8_t>({1,2,3}));}
++    }
++    for(bool thirdBad:{false,true}){
++        Store s;SaveManager m;PetState p;DeviceState d;GalleryData g;seed(s,m,p,d,g,true);
++        s.values["s0_dat"][0]^=1;if(thirdBad)s.values["s2_dat"][0]^=1;else{s.values.erase("s2_hdr");s.values.erase("s2_dat");s.values.erase("s2_gal");}
++        const auto ownerHeader=s.values["s0_hdr"],ownerData=s.values["s0_dat"];
++        SaveManager boot;CHECK(boot.init()==SAVE_OK&&boot.load(p)==SAVE_OK&&p.health==71);
++        CHECK(boot.getActiveSlotA()!=0&&boot.getActiveSlotB()!=0);
++        for(int i=0;i<6;++i){CHECK(boot.save(p,1700000900+i*300)==SAVE_OK);CHECK(s.values["s0_hdr"]==ownerHeader&&s.values["s0_dat"]==ownerData);}
++    }
++    for(const std::vector<uint8_t>& guard:std::vector<std::vector<uint8_t>>{{},{0xa7},{0xa7,0,255,1,0,0},{0xa7,0,255,99,0,0}}){
++        Store s;SaveManager m;PetState p;DeviceState d;GalleryData g;seed(s,m,p,d,g);
++        s.values["repair_guard"]=guard;const auto owner=s.values["s0_dat"];
++        SaveManager boot;CHECK(boot.init()==SAVE_OK&&boot.hasSave());
++        CHECK(save_workflow::loadStartup(boot,p)==save_workflow::Startup::Recovery);
++        blocked(s,boot,p,d,g);CHECK(s.values["repair_guard"]==guard&&s.values["s0_dat"]==owner);
++    }
++    std::cout<<"PASS startup/sidecars, unknown slot retention, frozen owner fallback\n";
++}
++void workflows(){
++    for(bool restore:{false,true})for(bool full:{false,true}){
++        if(restore&&full)continue;
++        const std::string target=restore?"s1":"s2";
++        for(const std::string stage:{"slot_cfg","dev_state","gallery","final_header","final_data","final_gallery","guard_complete","success","owner_bad"}){
++            if(restore&&stage=="gallery")continue;
++            if(!restore&&stage=="owner_bad")continue;
++            Store s;SaveManager m;PetState p;DeviceState d;GalleryData g;seed(s,m,p,d,g,restore);
++            if(stage=="owner_bad")s.values["s0_dat"][0]^=1;
++            const auto ownerHdr=s.values["s0_hdr"],ownerDat=s.values["s0_dat"],ram=raw(p),dev=raw(d),gal=raw(g);
++            auto donor=file(full?"adult-white.full.bin":"adult-white.pet.bin");
++            if(stage=="slot_cfg"||stage=="dev_state"||stage=="gallery")s.fail=stage;
++            if(stage=="final_header")s.fail=target+"_hdr";
++            if(stage=="final_data")s.fail=target+"_dat";
++            if(stage=="final_gallery")s.fail=target+"_gal";
++            if(stage=="guard_complete"){s.fail="repair_guard";s.failNth=2;}
++            const auto result=restore?save_workflow::restoreOwner(m,p,d,1700003600,15):save_workflow::commitImport(m,p,d,g,1,donor.data(),donor.size(),1700003600,15);
++            if(stage=="success"){
++                CHECK(result==SAVE_OK&&!m.operationPending()&&!m.recoveryRequired());
++                CHECK(d.is_visiting==(!restore&&!full));CHECK(p.health==(restore?50:73));
++                CHECK(d.rounds==(restore?4:5));CHECK(p.birth_timestamp==(restore?1700003600u:1699744400u));CHECK(p.daily_feed.date_day==15&&p.daily_feed.feed_count==0);CHECK(output.find(restore?"Owner restored":(full?"Full backup restored":"Visit started"))!=std::string::npos);
++                for(int i=0;i<4;++i){CHECK(m.save(p,1700003900+i*300)==SAVE_OK);SaveManager boot;CHECK(boot.init()==SAVE_OK&&boot.load(p)==SAVE_OK);CHECK(p.health==(restore?50:73));DeviceState disk;CHECK(boot.loadDeviceState(disk)==SAVE_OK&&disk.is_visiting==d.is_visiting);if(!restore&&!full)CHECK(s.values["s0_hdr"]==ownerHdr&&s.values["s0_dat"]==ownerDat);}
++            }else{
++                CHECK(result!=SAVE_OK&&m.operationPending());CHECK(output.find("FAILED stage=")!=std::string::npos);
++                CHECK(output.find("Owner restored")==std::string::npos&&output.find("Full backup restored")==std::string::npos&&output.find("Visit started")==std::string::npos);
++                CHECK(raw(p)==ram&&raw(d)==dev&&raw(g)==gal);
++                CHECK(s.values["s0_hdr"]==ownerHdr&&s.values["s0_dat"]==ownerDat);
++                blocked(s,m,p,d,g);s.fail.clear();SaveManager boot;CHECK(boot.init()==SAVE_OK);
++                CHECK(save_workflow::loadStartup(boot,p)==save_workflow::Startup::Recovery);blocked(s,boot,p,d,g);
++                if(stage!="owner_bad"){SaveHeader h;PetState owner;CHECK(boot.exportSlotRaw(0,h,owner)==SAVE_OK&&owner.health==50);}
++            }
++            DeviceState persisted;CHECK(m.loadDeviceState(persisted)==SAVE_OK);
++            const bool deviceWritten=stage=="success"||stage=="final_header"||stage=="final_data"||stage=="final_gallery"||stage=="guard_complete";
++            CHECK(persisted.is_visiting==(deviceWritten?(!restore&&!full):restore));
++            std::cout<<"NVS visiting="<<persisted.is_visiting<<" pending="<<m.operationPending()<<" owner_preserved="<<(s.values["s0_hdr"]==ownerHdr&&s.values["s0_dat"]==ownerDat)<<'\n';
++            if(stage!="success"){
++                const auto pos=output.find(restore?"[Visit] FAILED":"[SaveImport] FAILED");
++                std::cout<<"SERIAL "<<output.substr(pos,output.find('\n',pos)-pos)<<'\n';
++            }
++            if(stage=="final_data"){
++                SaveHeader header;PetState owner;GalleryData recoveredGallery;bool bound=false;
++                CHECK(m.exportSlotRawWithGallery(0,header,owner,recoveredGallery,bound)==SAVE_OK);
++                auto backup=raw(header);const auto ownerBytes=raw(owner),galleryBytes=raw(recoveredGallery);
++                backup.insert(backup.end(),ownerBytes.begin(),ownerBytes.end());
++                backup.insert(backup.end(),galleryBytes.begin(),galleryBytes.end());
++                s.eraseFail=true;const auto retained=s.values;
++                CHECK(m.erase()==SAVE_ERR_WRITE&&s.values==retained&&m.operationPending());s.eraseFail=false;
++                CHECK(m.erase()==SAVE_OK); // Simulates the existing explicit erase command only.
++                SaveManager restart;CHECK(restart.init()==SAVE_OK);
++                PetState recovered;CHECK(save_workflow::loadStartup(restart,recovered)==save_workflow::Startup::NewGame);
++                DeviceState emptyDevice;emptyDevice.init();GalleryData emptyGallery;emptyGallery.init();
++                CHECK(save_workflow::commitImport(restart,recovered,emptyDevice,emptyGallery,0,backup.data(),backup.size(),1700007200,15)==SAVE_OK);
++                SaveManager finalBoot;CHECK(finalBoot.init()==SAVE_OK&&finalBoot.load(recovered)==SAVE_OK&&recovered.health==50);
++                CHECK(finalBoot.loadDeviceState(emptyDevice)==SAVE_OK&&!emptyDevice.is_visiting);
++            }
++            std::cout<<"RESULT "<<(restore?"restore":(full?"full_import":"visit_import"))<<' '<<stage<<" result="<<unsigned(result)<<" RAM_HP="<<p.health<<" visiting="<<d.is_visiting<<" reboot="<<(stage=="success"?"Loaded":"Recovery")<<'\n';
++        }
++        const std::vector<std::string> steps=restore?std::vector<std::string>{"repair_guard","slot_cfg","dev_state","s1_hdr","s1_dat","s1_gal","repair_guard"}:std::vector<std::string>{"repair_guard","s1_hdr","s1_dat","gallery","slot_cfg","s1_gal","dev_state","s2_hdr","s2_dat","s2_gal","repair_guard"};
++        for(size_t cut=1;cut<=steps.size();++cut){
++            Store s;SaveManager m;PetState p;DeviceState d;GalleryData g;seed(s,m,p,d,g,restore);
++            const auto ownerHdr=s.values["s0_hdr"],ownerDat=s.values["s0_dat"],ram=raw(p),dev=raw(d),gal=raw(g);
++            auto donor=file(full?"adult-white.full.bin":"adult-white.pet.bin");s.cut=int(cut);bool interrupted=false;
++            try{if(restore)save_workflow::restoreOwner(m,p,d,1700003600,15);else save_workflow::commitImport(m,p,d,g,1,donor.data(),donor.size(),1700003600,15);}catch(const PowerLoss&){interrupted=true;}
++            CHECK(interrupted&&s.writes==int(cut)&&s.written.back()==steps[cut-1]);
++            CHECK(raw(p)==ram&&raw(d)==dev&&raw(g)==gal);
++            CHECK(output.find("Owner restored")==std::string::npos&&output.find("Full backup restored")==std::string::npos&&output.find("Visit started")==std::string::npos);
++            CHECK(s.values["s0_hdr"]==ownerHdr&&s.values["s0_dat"]==ownerDat);
++            s.cut=0;SaveManager boot;CHECK(boot.init()==SAVE_OK);
++            if(cut<steps.size()){CHECK(save_workflow::loadStartup(boot,p)==save_workflow::Startup::Recovery);blocked(s,boot,p,d,g);}
++            else{CHECK(save_workflow::loadStartup(boot,p)==save_workflow::Startup::Loaded);CHECK(p.health==(restore?50:73));CHECK(boot.loadDeviceState(d)==SAVE_OK&&d.is_visiting==(!restore&&!full));CHECK(boot.save(p,1700003900)==SAVE_OK);SaveManager again;CHECK(again.init()==SAVE_OK&&again.load(p)==SAVE_OK&&p.health==(restore?50:73));}
++            std::cout<<"POWER_CUT "<<(restore?"restore":(full?"full_import":"visit_import"))<<" after="<<cut<<':'<<steps[cut-1]<<" reboot="<<(cut<steps.size()?"Recovery":"Loaded")<<'\n';
++        }
++    }
++}
++void fixtures(){
++    for(const std::string name:{"adult-white.pet.bin","adult-white.full.bin","black.pet.bin","rhongo.pet.bin","nobu.pet.bin"}){
++        Store s;s.attach();SaveManager m;CHECK(m.init()==SAVE_OK);auto data=file(name);
++        s.values["s0_hdr"]={data.begin(),data.begin()+16};s.values["s0_dat"]={data.begin()+16,data.begin()+72};
++        if(data.size()==84)s.values["s0_gal"]={data.begin()+72,data.end()};
++        PetState p;CHECK(m.load(p)==SAVE_OK);SaveHeader h;PetState exported;GalleryData g;bool bound;
++        CHECK(m.exportSlotRawWithGallery(0,h,exported,g,bound)==SAVE_OK);
++        CHECK(raw(h)==std::vector<uint8_t>(data.begin(),data.begin()+16));CHECK(raw(exported)==std::vector<uint8_t>(data.begin()+16,data.begin()+72));
++        if(data.size()==84)CHECK(raw(g)==std::vector<uint8_t>(data.begin()+72,data.end()));
++    }
++    Store s;SaveManager m;PetState p;DeviceState d;GalleryData g;seed(s,m,p,d,g);
++    auto bad=file("adult-white.full.bin");
++    for(int kind=0;kind<5;++kind){auto bytes=bad;if(kind==0)bytes.resize(71);if(kind==1)bytes[0]=99;if(kind==2)bytes[20]^=1;if(kind==3){bytes[16]=99;std::vector<uint8_t> pet(bytes.begin()+16,bytes.begin()+72);auto sum=checksum(pet);bytes[4]=uint8_t(sum);bytes[5]=uint8_t(sum>>8);}if(kind==4)bytes[72]=2;const auto before=s.values;CHECK(save_workflow::commitImport(m,p,d,g,1,bytes.data(),bytes.size(),1700003600,15)!=SAVE_OK);CHECK(s.values==before&&!m.operationPending());}
++    std::cout<<"PASS target v9 fixture read/export and invalid import refusal\n";
++}
++}
++int main(){try{saveio::diagnostic=[](const char*s){output+=s;};fixtures();startupAndUnknown();workflows();std::cout<<"PASS original production save repair: "<<checks<<" checks\n";}catch(const std::exception&e){std::cerr<<"FAIL "<<e.what()<<'\n';return 1;}}
+diff --git a/tests/host/tool_repair_test.py b/tests/host/tool_repair_test.py
+new file mode 100644
+index 0000000..c8e3c6d
+--- /dev/null
++++ b/tests/host/tool_repair_test.py
+@@ -0,0 +1,62 @@
++#!/usr/bin/env python3
++"""Real original Python tool connected to the production main.cpp protocol."""
++import argparse,collections,importlib.util,os,select,subprocess,sys,tempfile
++from pathlib import Path
++root=Path(__file__).resolve().parents[2]
++p=argparse.ArgumentParser();p.add_argument('--bridge',required=True);args=p.parse_args()
++spec=importlib.util.spec_from_file_location('save_tool',root/'SaveManager/save_manager.py')
++mod=importlib.util.module_from_spec(spec);sys.modules[spec.name]=mod;spec.loader.exec_module(mod)
++checks=0
++def check(value):
++ global checks;checks+=1;assert value
++class Mock:
++ def __init__(self,lines):self.lines=iter(lines)
++ def readline(self):return next(self.lines,b'')
++ def write(self,data):return len(data)
++ def flush(self):pass
++ def __enter__(self):return self
++ def __exit__(self,*args):pass
++class Bridge:
++ def __init__(self,drop=False):
++  self.process=subprocess.Popen([args.bridge,'--bridge'],cwd=root,stdin=subprocess.PIPE,stdout=subprocess.PIPE,bufsize=0)
++  self.buffer=b'';self.fragments=collections.deque();self.drop=drop;self.dropped=False;self.sent=[]
++ def write(self,data):self.sent.append(data);return self.process.stdin.write(data)
++ def flush(self):self.process.stdin.flush()
++ def readline(self):
++  if self.fragments:return self.fragments.popleft()
++  if b'\n' not in self.buffer:
++   if not select.select([self.process.stdout],[],[],0.01)[0]:return b''
++   self.buffer+=os.read(self.process.stdout.fileno(),8192)
++  if b'\n' not in self.buffer:return b''
++  line,_,self.buffer=self.buffer.partition(b'\n');line+=b'\n'
++  if self.drop and not self.dropped and b'[SaveImport] RECV ' in line:self.dropped=True;return b''
++  self.fragments.append(line[len(line)//2:]);return line[:len(line)//2]
++ def __enter__(self):return self
++ def __exit__(self,*args):
++  self.process.stdin.close();self.process.wait(timeout=5);self.process.stdout.close()
++with tempfile.TemporaryDirectory(prefix='original-tool-') as temp:
++ target=Path(temp)/'backup.bin';target.write_bytes(b'preserve-existing')
++ fragment=Mock([b'SAVE_EXPORT_BE',b'GIN slot=0 bytes=84\n'])
++ check(mod._read_line(fragment)=='');check(mod._read_line(fragment)=='SAVE_EXPORT_BEGIN slot=0 bytes=84')
++ for ending in (b'SAVE_EXPORT_END slot=0 bytes=84\n',b'SAVE_EXPORT_END slot=1 bytes=1\n'):
++  mod._open_serial=lambda *a:Mock([b'SAVE_EXPORT_BEGIN slot=0 bytes=84\n',b'SAVE_EXPORT_DATA AA\n',ending])
++  try:mod.cmd_export('MOCK',115200,0.2,0,target);raise AssertionError('incomplete export accepted')
++  except ValueError:pass
++  check(target.read_bytes()==b'preserve-existing')
++ for pet_only in (False,True):
++  bridge=Bridge();mod._open_serial=lambda *a:bridge
++  mod.cmd_export('MOCK',115200,1,0,target,pet_only=pet_only)
++  check(len(target.read_bytes())==(72 if pet_only else 84))
++ for fixture in ('adult-white.full.bin','adult-white.pet.bin'):
++  bridge=Bridge(drop=True);mod._open_serial=lambda *a:bridge
++  mod.cmd_import('MOCK',115200,0.2,1,root/'tests/fixtures/v9'/fixture)
++  check(bridge.dropped)
++  data=[line for line in bridge.sent if line.startswith(b'SAVE_IMPORT_DATA')]
++  check(data[0]==data[1] and b'@0 ' in data[0])
++ # Unindexed old firmware: an ACK timeout must never resend an append packet.
++ old=Mock([b'[SaveImport] READY slot=1 target_bytes=84 (legacy=72)\n']);old.sent=[]
++ old.write=lambda data:old.sent.append(data) or len(data);mod._open_serial=lambda *a:old
++ try:mod.cmd_import('MOCK',115200,0.01,1,root/'tests/fixtures/v9/adult-white.full.bin');raise AssertionError('missing ACK accepted')
++ except TimeoutError:pass
++ check(len([line for line in old.sent if line.startswith(b'SAVE_IMPORT_DATA')])==1)
++print('PASS original Python/production protocol',checks,'checks')
+diff --git a/tools/repair/generate_v9_fixtures.py b/tools/repair/generate_v9_fixtures.py
+new file mode 100644
+index 0000000..a879078
+--- /dev/null
++++ b/tools/repair/generate_v9_fixtures.py
+@@ -0,0 +1,71 @@
++#!/usr/bin/env python3
++"""Extract original v9 objects with ESP32-S3 compiler, never host struct dumping."""
++import hashlib, json, os, struct, subprocess, tempfile
++from pathlib import Path
++ROOT=Path(__file__).resolve().parents[2]
++BASE='448dbe158595c1db9f1d2fc37caa15810c53de1c'
++OUT=ROOT/'tests/fixtures/v9'
++PREFIX=Path(os.environ.get('XTENSA_PREFIX', str(Path.home()/'.platformio/packages/toolchain-xtensa-esp32s3/bin/xtensa-esp32s3-elf-')))
++fields=['form','base_form','alignment','stage','health','seriousness','idle_minute_remainder','idle_paused_until','last_poke_effect_time','rhongo_timer_start','is_rhongomyniad','white_fun_form','white_fun_form_locked','mapo_tofu_count','is_black_rhongomyniad','is_nobu','is_oda_nobunaga','birth_timestamp','last_interact_time','age_days','daily_feed']
++headers=['version','data_size','checksum','sequence','save_time']
++def run(args): return subprocess.check_output([str(x) for x in args])
++def checksum(data):
++    value=0xffff
++    for byte in data:
++        value^=byte
++        value=((value<<3)|(value>>13))&0xffff
++        value=(value+byte)&0xffff
++    return value
++with tempfile.TemporaryDirectory(prefix='esp32-v9-') as directory:
++    temp=Path(directory)
++    header=run(['git','-C',ROOT,'show',f'{BASE}:src/core/game_state.h'])
++    (temp/'original_game_state.h').write_bytes(header)
++    (temp/'core').mkdir();(temp/'pet').mkdir()
++    (temp/'core/game_state.h').write_bytes(header)
++    (temp/'pet/gallery.h').write_bytes(run(['git','-C',ROOT,'show',f'{BASE}:src/pet/gallery.h']))
++    offset=', '.join('offsetof(PetState, '+f+')' for f in fields)
++    hoffset=', '.join('offsetof(SaveHeader, '+f+')' for f in headers)
++    source='''#include "original_game_state.h"
++#include "pet/gallery.h"
++#include <stddef.h>
++extern "C" {
++__attribute__((section(".fixture.layout"),used)) const uint32_t layout[] = {
++sizeof(PetState), sizeof(SaveHeader), sizeof(DeviceState), sizeof(DailyFeedState), OFFSET, HOFFSET, sizeof(GalleryData), offsetof(DeviceState,device_clock_epoch),offsetof(DeviceState,rounds),offsetof(DeviceState,is_visiting),offsetof(DeviceState,owner_frozen_slot),offsetof(DeviceState,visit_start_epoch)};
++__attribute__((section(".fixture.pet"),used)) const PetState fixture = {
++FORM_WHITE_LANCER, FORM_WHITE_SABER, ALIGN_WHITE, STAGE_ADULT,
++73, 100, 4, 1700001800, 1700000000, 1699900000, false,
++FORM_WHITE_ARCHER, true, 2, false, false, false, 1699740800, 1700000000, 3,
++{14, 2, 1699998200, 1, 0, 0, 1}};
++__attribute__((section(".fixture.header"),used)) const SaveHeader header = {9, sizeof(PetState), 0, 42, 1700000000};
++}
++'''.replace('HOFFSET',hoffset).replace('OFFSET',offset)
++    source=source.replace('const PetState fixture =', 'constexpr PetState fixture =')
++    source+='\nconstexpr PetState variant(int kind) {\n    PetState p=fixture;\n    if(kind==1){p.form=FORM_NOBU;p.base_form=FORM_NOBU;p.alignment=ALIGN_UNDETERMINED;p.stage=STAGE_CHILD;p.is_nobu=true;p.mapo_tofu_count=0;}\n    if(kind==2){p.form=FORM_BLACK_LANCER_RHONGOMYNIAD;p.alignment=ALIGN_BLACK;p.is_black_rhongomyniad=true;p.mapo_tofu_count=3;}\n    if(kind==3){p.form=FORM_WHITE_LANCER_RHONGOMYNIAD;p.is_rhongomyniad=true;}\n    return p;\n}\n__attribute__((section(".fixture.nobu"),used)) const PetState nobu=variant(1);\n__attribute__((section(".fixture.black"),used)) const PetState black=variant(2);\n__attribute__((section(".fixture.rhongo"),used)) const PetState rhongo=variant(3);\n'
++    source+='\n__attribute__((section(".fixture.gallery"),used)) const GalleryData gallery={{true,true,false,true,false,true,false,false,false,false,false,false}};\n__attribute__((section(".fixture.device"),used)) const DeviceState device={1700000000,7,false,255,0};\n__attribute__((section(".fixture.device_visit"),used)) const DeviceState device_visit={1700000000,7,true,0,1700000000};\n'
++    (temp/'fixture.cpp').write_text(source)
++    compile_command=[str(PREFIX)+'g++','-std=gnu++17','-c',str(temp/'fixture.cpp'),'-o',str(temp/'fixture.o')]
++    run(compile_command)
++    data={}
++    for section in ('layout','pet','header','nobu','black','rhongo','gallery','device','device_visit'):
++        target=temp/(section+'.bin')
++        run([str(PREFIX)+'objcopy','--dump-section',f'.fixture.{section}={target}',temp/'fixture.o'])
++        data[section]=target.read_bytes()
++    values=struct.unpack('<'+'I'*(len(data['layout'])//4),data['layout'])
++    layout={'pet_size':values[0],'header_size':values[1],'device_size':values[2],'daily_size':values[3], 'pet_offsets':dict(zip(fields,values[4:4+len(fields)])), 'header_offsets':dict(zip(headers,values[4+len(fields):]))}
++    hdr=bytearray(data['header'])
++    struct.pack_into('<H',hdr,layout['header_offsets']['checksum'],checksum(data['pet']))
++    OUT.mkdir(parents=True,exist_ok=True)
++    payload=bytes(hdr)+data['pet']
++    gallery=data['gallery']
++    layout['gallery_size']=values[30]
++    layout['device_offsets']=dict(zip(['device_clock_epoch','rounds','is_visiting','owner_frozen_slot','visit_start_epoch'],values[31:]))
++    for name in ('gallery','device','device_visit'):(OUT/(name+'.bin')).write_bytes(data[name])
++    for name,raw in [('adult-white.pet.bin',payload),('adult-white.full.bin',payload+gallery)]:
++        (OUT/name).write_bytes(raw)
++    for name in ('nobu','black','rhongo'):
++        variantHeader=bytearray(data['header'])
++        struct.pack_into('<H',variantHeader,layout['header_offsets']['checksum'],checksum(data[name]))
++        (OUT/(name+'.pet.bin')).write_bytes(variantHeader+data[name])
++    manifest={'source_commit' :BASE,'source_header_sha256':hashlib.sha256(header).hexdigest(),'compiler':run([str(PREFIX)+'g++','--version']).decode().splitlines()[0], 'compile_flags':['-std=gnu++17','-c'], 'layout':layout,'fixtures':{name:hashlib.sha256((OUT/name).read_bytes()).hexdigest() for name in ['adult-white.pet.bin','adult-white.full.bin','nobu.pet.bin','black.pet.bin','rhongo.pet.bin','gallery.bin','device.bin','device_visit.bin']},'origin':'Static aggregate objects compiled with original firmware header and target Xtensa toolchain; checksum filled over target pet bytes using original algorithm. Gallery and DeviceState objects also use original headers and target compiler. No hardware dump; runtime padding and real NVS failures not sampled.'}
++    (OUT/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
++    print(json.dumps(manifest,indent=2))
+diff --git a/tools/repair/package_repairs.py b/tools/repair/package_repairs.py
+new file mode 100644
+index 0000000..e23ce1d
+--- /dev/null
++++ b/tools/repair/package_repairs.py
+@@ -0,0 +1,32 @@
++#!/usr/bin/env python3
++"""Package reviewed original repairs with an isolated index and verify in a clean clone."""
++import hashlib,json,os,subprocess,sys,tempfile
++from pathlib import Path
++root=Path(__file__).resolve().parents[2]
++base='448dbe158595c1db9f1d2fc37caa15810c53de1c'
++report=root/'reports/original-repair';(report/'evidence').mkdir(parents=True,exist_ok=True)
++with tempfile.TemporaryDirectory(prefix='original-portable-') as directory:
++ temp=Path(directory);env=dict(os.environ,GIT_INDEX_FILE=str(temp/'index'))
++ subprocess.run(['git','read-tree',base],cwd=root,env=env,check=True)
++ paths=[p for p in subprocess.check_output(['git','diff','--name-only',base],cwd=root,text=True).splitlines()
++        if not p.startswith('reports/')]
++ paths+= [p for p in subprocess.check_output(['git','ls-files','--others','--exclude-standard'],cwd=root,text=True).splitlines()
++          if p.startswith(('src/','tests/','tools/repair/'))]
++ subprocess.run(['git','add','--',*paths],cwd=root,env=env,check=True)
++ data=subprocess.check_output(['git','diff','--cached','--binary',base],cwd=root,env=env)
++ patch=report/'original-save-repairs.patch';patch.write_bytes(data)
++ clone=temp/'clean'
++ subprocess.run(['git','clone','--quiet','--no-hardlinks',str(root),str(clone)],check=True)
++ subprocess.run(['git','checkout','--quiet','--detach',base],cwd=clone,check=True)
++ receipt={'base':base,'patch_bytes':len(data),'sha256':hashlib.sha256(data).hexdigest(),'commands':[]}
++ with (report/'evidence/additional-portable-patch.log').open('w') as log:
++  for command in (['git','apply','--check',str(patch)],['git','apply',str(patch)],[sys.executable,'tests/host/run_all.py']):
++   log.write('+ '+' '.join(command)+'\n');log.flush()
++   result=subprocess.run(command,cwd=clone,stdout=log,stderr=subprocess.STDOUT)
++   receipt['commands'].append({'command':command,'exit_code':result.returncode})
++   if result.returncode:raise RuntimeError('portable verification failed; see log')
++  for path in paths:
++   if (root/path).is_file():assert (clone/path).read_bytes()==(root/path).read_bytes(),path
++  log.write('PASS clean baseline apply/check, complete offline regression and delivered file identity\n')
++ (report/'evidence/additional-patch-receipt.json').write_text(json.dumps(receipt,indent=2)+'\n')
++ print('PASS original portable patch',len(data),'bytes',receipt['sha256'])

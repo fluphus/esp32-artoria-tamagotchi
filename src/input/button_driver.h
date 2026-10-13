@@ -87,6 +87,7 @@ public:
 private:
     ButtonState _buttons[BTN_ID_COUNT];
     ComboState  _combo;
+    bool _suppressUntilRelease=false;
     ButtonEvent _events[MAX_EVENTS_PER_FRAME];
     uint8_t     _event_count;
 

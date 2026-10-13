@@ -1,0 +1,40 @@
++ g++ -std=c++17 -Wall -Wextra -Wno-unused-parameter -Wno-format -Wno-return-type -DDISPLAY_BACKEND_SERIAL_PLACEHOLDER=1 -DDISPLAY_BACKEND_TFT_ESPI=0 -Itests/host/peripherals -Isrc tests/host/application_repair_test.cpp src/core/save_manager.cpp src/core/save_io.cpp src/core/save_workflows.cpp src/core/time_manager.cpp src/pet/feeding.cpp src/pet/evolution.cpp src/pet/seriousness.cpp src/pet/gallery.cpp src/input/button_driver.cpp src/input/input_manager.cpp src/input/menu_controller.cpp src/display/DisplayManager.cpp src/display/display_renderer.cpp src/display/display_assets.cpp src/display/asset_loader.cpp src/presentation/animation_queue.cpp src/presentation/animation_director.cpp src/presentation/idle_resolver.cpp src/presentation/pet_state_query.cpp src/display/generated_assets/generated_asset_data.cpp -o /tmp/original-app-mkgtb1gu/test
+In file included from tests/host/application_repair_test.cpp:5:
+tests/host/../../src/main.cpp:111:13: warning: ‘void persistCurrentFormUnlock()’ defined but not used [-Wunused-function]
+  111 | static void persistCurrentFormUnlock() {
+      |             ^~~~~~~~~~~~~~~~~~~~~~~~
+src/input/menu_controller.cpp: In member function ‘void MenuController::confirmFeed()’:
+src/input/menu_controller.cpp:452:20: warning: variable ‘sR’ set but not used [-Wunused-but-set-variable=]
+  452 |     InteractResult sR = seriousnessSystem.onInteract(*_pet, INTERACT_FEED, now);
+      |                    ^~
+PASS clockRollover
+PASS clockFraction
+PASS destroyRelease
+PASS displayRollover
+PASS initialTimeFailures
+PASS capacity
+MAX_OFFLINE 366 days host_ms=13
+PASS offlineLimit
+PASS lineProtocol
+PASS storageBoundaries
+PASS timeInterruptions
+PASS normalSetTime
+PASS protocolCompletion
+PASS firstTimeSetup
+PASS visitTimeFailure
+PASS manualRecovery
+437 application assertions, failures=0
+已导出 slot0 -> /tmp/original-tool-uz5nu16p/backup.bin (84 bytes)
+已导出 slot0 -> /tmp/original-tool-uz5nu16p/backup.bin (72 bytes)
+[Import] Device READY: [SaveImport] READY slot=1 target_bytes=84 (legacy=72) offset=1
+[Import] Local file bytes: 84
+[Import] 分包 1/6 未确认，重试 1/2...
+完整备份恢复完成：/home/omni/.codex/worktrees/original-save-repairs/esp32-artoria-tamagotchi/tests/fixtures/v9/adult-white.full.bin -> slot1
+[Import] Device READY: [SaveImport] READY slot=1 target_bytes=84 (legacy=72) offset=1
+[Import] Local file bytes: 72
+[Import] 分包 1/5 未确认，重试 1/2...
+串门开始：/home/omni/.codex/worktrees/original-save-repairs/esp32-artoria-tamagotchi/tests/fixtures/v9/adult-white.pet.bin -> slot1
+访客宠物已加载。销毁(reset)访客宠物将结束串门并恢复主人宠物。
+[Import] Device READY: [SaveImport] READY slot=1 target_bytes=84 (legacy=72)
+[Import] Local file bytes: 84
+PASS original Python/production protocol 11 checks

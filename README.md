@@ -1,6 +1,8 @@
 [English](README.md) | [简体中文](README_zh.md) | [日本語](README_ja.md)
 # 👑 Artoria Tamagotchi (Fate/Grand Order Virtual Pet)
 
+This repository maintains the original **Artoria game and v9 save format**. The reusable C++17 engine with Artoria and Pocket Sprout lives in [embedded-tamagotchi-engine](https://github.com/fluphus/embedded-tamagotchi-engine).
+
 A Tamagotchi-like virtual pet project powered by the **ESP32-S3 (N16R8)**.
 
 Raise your own Artoria! Start your journey with Saber Lily and guide her growth. Depending on your care and interactions, she can evolve into various classes including Archer, Lancer, Rider, and more.
@@ -10,13 +12,13 @@ Raise your own Artoria! Start your journey with Saber Lily and guide her growth.
 * **Time & Day Management:** Built-in internal clock to handle daily resets and penalties for missing meals.
 * **Persistent Storage:** 3-slot save system with checksum validation, serial full or pet-only export, slot import with full-restore or visit (trade-in) mode, device-bound rounds/clock state, and import-time safeguards.
 * **Interactive Actions:** Feed, Poke, and monitor status.
-* **Presentation & Display:** Cutscenes for feed, combo chains, Poke, evolution, and similar flows are driven by an ordered animation queue; idle sprites are tiered from pet state (Health, Seriousness, etc.), including **Rhongomyniad**. SSD1351 128×128 65K color OLED via TFT_eSPI, plus a serial placeholder backend for headless testing. Optional: bake PNGs under `assets/` into flash-resident binaries (missing assets fall back to placeholders).
+* **Presentation & Display:** Cutscenes for feed, combo chains, Poke, evolution, and similar flows are driven by an ordered animation queue; idle sprites are tiered from pet state (Health, Seriousness, etc.), including **Rhongomyniad**. SSD1351 128×128 65K color OLED via Adafruit GFX / Adafruit SSD1351, plus a serial placeholder backend for headless testing. Optional: bake PNGs under `assets/` into flash-resident binaries (missing assets fall back to placeholders).
 
 ## 🚧 Current Project Status
 
 * **Gameplay & systems:** Core loops are in place end-to-end—feeding and combos, special foods, Poke, evolution, day roll-up, save import/export, gallery, destroy confirmation, and related flows all run. Recent work routes on-screen cutscenes through a single “queue frames, play them on time” path; idle poses are picked from pet state and loaded from flash (placeholders remain when art is missing).
 * **Art & assets:** Final sprite / keyframe art is not all finished or wired in yet; the device still uses **stick figures** plus simple shapes and text so layouts and timing can be validated. Once assets are built through the `assets/` pipeline, the same logic can show real PNG sequences.
-* **Display:** TFT_eSPI backend (SSD1351 128×128) and Serial placeholder backend both compile and run.
+* **Display:** SSD1351 backend (Adafruit libraries) and Serial placeholder backend both compile. Physical display and button checks for this legacy repair edition remain unverified.
 * **Input:** 3-button physical input (L/M/R) with serial simulation (`btn l|m|r`, `btnl l|m|r`, `btnr l|m|r`).
 
 ## 🛠️ Hardware Requirements
@@ -41,18 +43,15 @@ Raise your own Artoria! Start your journey with Saber Lily and guide her growth.
 ## Build
 
 ```bash
-pio run                    # Build (TFT_eSPI backend, default)
-pio run -t upload          # Upload to device
-pio device monitor         # Serial monitor (115200 baud)
+pio run -e esp32-s3-devkitc-1            # SSD1351 build
+pio run -e original-serial               # Serial placeholder build
+pio run -e esp32-s3-devkitc-1 -t upload  # Upload selected environment
+pio device monitor -b 115200            # Serial monitor
 ```
 
 To regenerate embedded art from PNGs under `assets/`, run `python tools/convert_assets.py` in a Python environment with **Pillow** installed (naming and folders are documented in `assets/README.md`). The PlatformIO pre-build hook stays commented by default so builds do not break when PlatformIO’s bundled Python lacks Pillow; if you skip conversion, the firmware still runs using stick-figure / placeholder graphics.
 
-To switch to Serial placeholder backend (no screen), edit `src/display/display_config.h`:
-```c
-#define DISPLAY_BACKEND_SERIAL_PLACEHOLDER  1
-#define DISPLAY_BACKEND_TFT_ESPI            0
-```
+Select `original-serial` at build time; no header edits are needed. This backend still runs on ESP32-S3. Host tests use separate peripheral adapters. Install `Pillow` for PNG conversion and `pyserial` for the save tool.
 
 ## Button Mapping
 
@@ -100,12 +99,14 @@ To switch to Serial placeholder backend (no screen), edit `src/display/display_c
 ### Destroy Combo
 Hold all three buttons (L+M+R) for 5 seconds to trigger destroy confirmation (default cursor on NO).
 
+Confirm the date/time after first boot or power loss. In setup, L increases the current field, M moves to the next field or confirms, R moves back, and long L restores the editable default date.
+
 ## Smoke Test Procedure (Serial / Buttons)
 
 Use serial commands to simulate button presses. Connect at 115200 baud.
 
 ### 1. Boot to Idle
-Power on. Boot screen displays for ~1.5s, then transitions to Idle automatically.
+Power on and wait for the boot screen (~1.5s). First boot or power loss requires date/time confirmation with the buttons or `SET_TIME <unix_seconds>`; enter Idle only after setup succeeds. A recovery lock blocks normal play.
 
 ### 2. Status Panel
 ```
@@ -121,7 +122,9 @@ btn l          # Start feed draw (shows 4 food cards with animation)
 btn l          # Move cursor left
 btn r          # Move cursor right
 btn m          # Select food at cursor (repeat to select 3)
+btn r          # Move to a different food
 btn m          # Second selection
+btn r          # Move to a third food
 btn m          # Third selection -> auto-submit, shows Feed Result
                # Feed Result stays for at least 1.5 seconds
                # Then returns to idle automatically
@@ -160,10 +163,10 @@ btn r          # Poke animation plays (~500ms)
 
 ### 8. Destroy — Three-Button Hold
 ```
-btnl l         # Simulate long press L (in practice, hold all 3 for 5s)
-               # For serial testing, use the 'reset' command instead
-               # Or test destroy confirm UI:
 ctx            # Check current context
+# Physically hold L+M+R for 5 seconds to test destroy confirmation.
+# 'btnl l' simulates only L; it does not simulate a simultaneous three-key hold.
+# 'reset' directly resets the pet / restores the owner, bypassing confirmation.
 ```
 Destroy confirm: default cursor on NO (safe). L/R to move, M to confirm.
 
@@ -182,7 +185,7 @@ load           # Load save
 erase          # Erase save
 reset          # Destroy and reset pet (ends visit if visiting)
 stime Y M D H m  # Set simulated time
-SET_TIME <epoch> # Set system time (unix timestamp, triggers offline compensation)
+SET_TIME <epoch> # Confirm/set time; offline compensation applies during setup wait
 hp <val>       # Debug: set health (0-100)
 sr <val>       # Debug: set seriousness (0-100)
 age <val>      # Debug: set age days
@@ -228,7 +231,7 @@ Some fields are stored **per device** (not inside a slot): **`rounds`** (increme
 
 **Pet-only import** (payload length = pet-only): **Visit mode** — among the two active slots, the newer pet is treated as the **owner** and that slot stays frozen on disk; the imported slot holds the **guest**, which is loaded into RAM. Local gallery data stays in place, but the guest’s current form is unlocked if needed. Import into the owner’s latest slot is **rejected** (pick the other active slot). **`rounds`** and **`device_clock_epoch`** are updated similarly to a full import.
 
-**While visiting:** new **`SAVE_IMPORT_*`** is rejected; **`SET_TIME`**, **`stime`**, **`t <min>`**, and **`d`** are rejected so time does not drift with a guest loaded. **`reset`** destroys the guest and restores the owner (visit ends). Invalid payloads (e.g. **`save_time == 0`**) print **`[SaveImport] REJECTED:`** and abort.
+**While visiting:** new imports and **`stime`**, **`t <min>`**, and **`d`** are rejected. **`SET_TIME`** is rejected during normal visitor play; after power loss it can confirm the time and compensate the visitor while the owner remains frozen. **`reset`** destroys the guest and restores the owner (visit ends). Invalid payloads (e.g. **`save_time == 0`**) print **`[SaveImport] REJECTED:`** and abort.
 
 ### Firmware commands
 
@@ -262,7 +265,7 @@ py save_manager.py --port COM5 import --slot 1 --in slot0_full.bin
 - **Full backup:** The imported slot joins the active pair; from the other two slots, the **older** one becomes the second active slot (by sequence, then save time; empty slots count as older). The remaining slot is **frozen** and skipped by auto/manual rotation. Success line: **`[SaveImport] Full backup restored ...`**.
 - **Pet-only (visit):** Owner slot is frozen; guest lives in the imported slot; **`[SaveImport] Visit started ...`** on success. **`reset`** ends the visit and restores the owner.
 - If the device was waiting for **first-time** clock setup when import completes, it leaves that wait using the stored device clock anchor when possible; normal boots are unchanged. Offline “catch-up from old save time” is **not** applied in the import paths described above.
-- After alignment, data is persisted; if verification fails elsewhere in the stack, background retry may still apply as implemented.
+- Import, owner restoration and time confirmation use a durable recovery guard. A partial failure blocks gameplay and automatic writes, including after restart; it does not report full success or silently erase data. Ordinary v9 rotation still writes separate keys and is not a cross-key transaction.
 
 ## Page Hold Behavior
 
@@ -271,9 +274,31 @@ The display system uses a "page hold" mechanism to ensure result/confirmation pa
 - **Feed Result (non-combo):** Held for 1500ms, input blocked, then auto-returns to idle.
 - **Special Food Confirm (non-mapo):** Held for 1000ms, input blocked, then auto-returns to idle.
 - **Mapo Tofu:** Animation plays for 1500ms (managed by animation system, not hold).
-- **Boot:** Auto-transitions to idle after 1500ms.
+- **Boot:** After 1500ms, continues to Idle or the required time-setup screen. Recovery prevents normal operation.
 - **Day End:** Animation plays for 1500ms, input blocked.
 - **Evolution:** Animation plays for 2000ms, input blocked.
 - **Destroy animation:** Animation plays for 2000ms, input blocked.
 
 During any hold or animation, `isPageBlockingInput()` returns true and the MenuController skips input processing.
+
+## Verification and Recovery
+
+The offline repair suite runs actual production save, menu, time, display and serial paths with peripheral adapters:
+
+```sh
+python tests/host/run_all.py
+```
+
+Run from a Git checkout retaining the original baseline history. Build with PlatformIO first to install the ESP32-S3 target compiler used by ABI checks. See the [repair report](reports/original-repair/README.md) for commands, failure/interruption tests and remaining limits. This legacy repair edition has host regression and two-backend build evidence; its physical hardware tests have not been executed. Engine hardware results do not apply to this edition.
+
+The original v9 format remains **72 bytes pet-only / 84 bytes full**. This firmware does not read engine v10 backups. Normal v9 saves use multiple NVS keys; the recovery guard covers import, owner restoration and time confirmation, not all ordinary saves.
+
+If recovery is required, export a readable full slot before an explicit erase. Choose the actual retained owner slot from slot status / device state:
+
+```sh
+python SaveManager/save_manager.py --port PORT export --slot 0 --out owner.bin
+# After checking the backup, send erase in the serial console: it deletes game saves.
+python SaveManager/save_manager.py --port PORT import --slot 1 --in owner.bin
+```
+
+Normal boot does not erase data or automatically finish an interrupted protected operation. Offline catch-up supports at most 366 days, subject to age/epoch capacity; it preserves the original minute/day rules.

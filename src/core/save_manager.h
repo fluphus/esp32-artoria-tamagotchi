@@ -54,8 +54,14 @@ public:
     // 校验 sequence 最新的槽
     bool verifyLatestSave(uint32_t expectedEpoch, const PetState& pet);
 
-    // 是否存在至少一个有效存档
+    // 是否存在原始记录（包括损坏、未知或只有附属数据）
     bool hasSave();
+    bool recoveryRequired() const {return _recoveryRequired;}
+    void requireRecovery(){_recoveryRequired=true;_operation=false;}
+    bool initialized() const { return _initialized; }
+    bool operationPending() const;
+    SaveResult beginOperation(uint8_t frozenOwner);
+    SaveResult finishOperation();
 
     // 删除所有存档 (销毁时用)
     SaveResult erase();
@@ -82,27 +88,33 @@ public:
     // 导出带图鉴的按槽快照 (完整备份)
     SaveResult exportSlotRawWithGallery(uint8_t slot, SaveHeader& hdr, PetState& pet,
                                         GalleryData& gallery, bool& galleryBoundToSlot);
+    SaveResult validateImport(const SaveHeader& header,const PetState& pet);
     SaveResult importSlotRaw(uint8_t slot, const SaveHeader& hdr, const PetState& pet, bool forceNewest);
     SaveResult loadFromSlot(uint8_t slot, PetState& pet);
     bool getSlotStatus(uint8_t slot, SaveHeader& hdr, SaveResult& status);
     // 将当前全局图鉴快照绑定到指定槽
-    void syncGlobalGalleryToSlot(uint8_t slot);
+    SaveResult syncGlobalGalleryToSlot(uint8_t slot);
 
     // --- 活动存档槽对配置（持久化在 NVS） ---
-    void setActivePairForImportedBaseSlot(uint8_t baseSlot);
+    SaveResult setActivePairForImportedBaseSlot(uint8_t baseSlot);
     // 串门专用：冻结主人最新存档到指定槽，其余两槽作为访客轮转
-    void setActivePairForVisit(uint8_t ownerFrozenSlot);
+    SaveResult setActivePairForVisit(uint8_t ownerFrozenSlot);
     // 串门结束：恢复主人存档的活跃槽对
-    void setActivePairAfterVisitEnd(uint8_t ownerSlot);
+    SaveResult setActivePairAfterVisitEnd(uint8_t ownerSlot);
 
     // 查询当前活跃槽对
     uint8_t getActiveSlotA() const { return _activeSlotA; }
     uint8_t getActiveSlotB() const { return _activeSlotB; }
 
     // 直接设置活跃槽对 (用于回滚)
-    void setActivePair(uint8_t a, uint8_t b);
+    SaveResult setActivePair(uint8_t a, uint8_t b);
 
 private:
+    bool slotHasData(uint8_t slot) const;
+    bool slotWritable(uint8_t slot);
+    bool _recoveryRequired=false;
+    bool _operation=false;
+    uint8_t _frozenOwner=0xff;
     bool _initialized = false;
     uint32_t _lastSaveTime = 0;
     uint32_t _nextSequence = 1;
@@ -127,8 +139,8 @@ private:
     bool verifyWrittenSlot(uint8_t slot, uint32_t saveTime, uint32_t expectedSeq, const PetState& pet);
     void resyncSequenceFromNvs();
     bool isSlotActive(uint8_t slot) const;
-    void loadActivePairConfig();
-    void persistActivePairConfig();
+    SaveResult loadActivePairConfig();
+    SaveResult persistActivePairConfig();
     bool loadSlotGallery(uint8_t slot, GalleryData& gallery);
 
     // 简单校验和

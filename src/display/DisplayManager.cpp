@@ -136,7 +136,7 @@ void DisplayManager::update(uint32_t nowMs) {
     }
 
     // --- Page hold 超时检测 ---
-    if (_pageHoldActive && nowMs >= _pageHoldUntilMs) {
+    if (_pageHoldActive && int32_t(nowMs - _pageHoldUntilMs) >= 0) {
         _pageHoldActive = false;
         DisplayPage nextPage = _pageAfterHold;
         // UIContext nextCtx = _contextAfterHold; // 不主动切 context, 由 switchPage 触发
@@ -166,7 +166,7 @@ void DisplayManager::update(uint32_t nowMs) {
     }
 
     // --- Toast 超时 ---
-    if (_model.toast[0] != '\0' && nowMs >= _model.toastUntilMs) {
+    if (_model.toast[0] != '\0' && int32_t(nowMs - _model.toastUntilMs) >= 0) {
         _model.toast[0] = '\0';
         markDirty();
     }

@@ -1,0 +1,14 @@
+Verification receipt (not a compiler output transcript)
+Source baseline: 448dbe158595c1db9f1d2fc37caa15810c53de1c
+Patch: original-save-repairs.patch
+Bytes: 111759
+SHA256: 87e6fe7836b9edc8fdc0c70d52d9bacf67278ba518d8fdf45ec8b882ca870da3
+Executed in a disposable local clone:
+  git checkout --detach 448dbe158595c1db9f1d2fc37caa15810c53de1c
+  git apply --check <absolute-patch-path>
+  git apply <absolute-patch-path>
+  python3 tests/host/run_all.py
+All subprocess exit codes: 0.
+Result: 1684 save checks, 35 original/repaired behavior trace records match;
+current target ABI and original file/fixture identity checks pass.
+No network push, device operation or changes to the engine workspace.

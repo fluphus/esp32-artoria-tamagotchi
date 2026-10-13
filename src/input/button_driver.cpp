@@ -8,6 +8,7 @@
 ButtonDriver buttonDriver;
 
 void ButtonDriver::init() {
+    _suppressUntilRelease=false;
     for (uint8_t i = 0; i < BTN_ID_COUNT; i++) {
         uint8_t pin = BTN_PIN_MAP[i];
         if (BTN_ACTIVE_LOW) {
@@ -96,6 +97,13 @@ bool ButtonDriver::isInComboCandidateWindow(uint32_t now) const {
 }
 
 void ButtonDriver::detectEvents(uint32_t now) {
+    if (_suppressUntilRelease) {
+        if (countPressedButtons()==0) {
+            _suppressUntilRelease=false;
+            for (auto& button:_buttons) {button.last_stable=false;button.press_dispatched=true;}
+        }
+        return;
+    }
     // 如果三键组合已触发或正在持续, 屏蔽所有普通按键事件
     if (_combo.combo_fired || (_combo.all_pressed && (now - _combo.combo_start_ms) > BTN_COMBO_CANDIDATE_MS)) {
         return;
@@ -214,6 +222,7 @@ uint32_t ButtonDriver::comboHoldDuration() const {
 }
 
 void ButtonDriver::resetCombo() {
+    if (_combo.all_pressed || _combo.combo_fired) _suppressUntilRelease=true;
     _combo.all_pressed = false;
     _combo.combo_start_ms = 0;
     _combo.combo_fired = false;

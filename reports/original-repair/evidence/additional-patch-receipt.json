@@ -1,0 +1,31 @@
+{
+  "base": "448dbe158595c1db9f1d2fc37caa15810c53de1c",
+  "patch_bytes": 205601,
+  "sha256": "2e355058c4556342fc54f615fd399db80e301aeff1b46964ab6ef32764b79c06",
+  "commands": [
+    {
+      "command": [
+        "git",
+        "apply",
+        "--check",
+        "/home/omni/.codex/worktrees/original-save-repairs/esp32-artoria-tamagotchi/reports/original-repair/original-save-repairs.patch"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "git",
+        "apply",
+        "/home/omni/.codex/worktrees/original-save-repairs/esp32-artoria-tamagotchi/reports/original-repair/original-save-repairs.patch"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "/usr/bin/python",
+        "tests/host/run_all.py"
+      ],
+      "exit_code": 0
+    }
+  ]
+}

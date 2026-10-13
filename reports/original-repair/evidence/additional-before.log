@@ -1,0 +1,24 @@
++ g++ -std=c++17 -Wall -Wextra -Wno-unused-parameter -Wno-format -Wno-return-type -DDISPLAY_BACKEND_SERIAL_PLACEHOLDER=1 -DDISPLAY_BACKEND_TFT_ESPI=0 -Itests/host/peripherals -Isrc tests/host/application_repair_test.cpp src/core/save_manager.cpp src/core/save_io.cpp src/core/save_workflows.cpp src/core/time_manager.cpp src/pet/feeding.cpp src/pet/evolution.cpp src/pet/seriousness.cpp src/pet/gallery.cpp src/input/button_driver.cpp src/input/input_manager.cpp src/input/menu_controller.cpp src/display/DisplayManager.cpp src/display/display_renderer.cpp src/display/display_assets.cpp src/display/asset_loader.cpp src/presentation/animation_queue.cpp src/presentation/animation_director.cpp src/presentation/idle_resolver.cpp src/presentation/pet_state_query.cpp src/display/generated_assets/generated_asset_data.cpp -o /tmp/original-app-_cvkvmue/test
+In file included from tests/host/application_repair_test.cpp:5:
+tests/host/../../src/main.cpp:108:13: warning: ‘void persistCurrentFormUnlock()’ defined but not used [-Wunused-function]
+  108 | static void persistCurrentFormUnlock() {
+      |             ^~~~~~~~~~~~~~~~~~~~~~~~
+src/input/menu_controller.cpp: In member function ‘void MenuController::confirmFeed()’:
+src/input/menu_controller.cpp:452:20: warning: variable ‘sR’ set but not used [-Wunused-but-set-variable=]
+  452 |     InteractResult sR = seriousnessSystem.onInteract(*_pet, INTERACT_FEED, now);
+      |                    ^~
+FAIL clockRollover clockRollover:39 now>=previous
+FAIL destroyRelease destroyRelease:43 menuController.getCurrentContext()==UI_DESTROY_CONFIRM&&deviceState.rounds==rounds&&store.values==disk
+FAIL displayRollover displayRollover:49 DisplayManager::getCurrentPage()==PAGE_FEED_RESULT
+FAIL initialTimeFailures initialTimeFailures:55 waitingForTimeSet&&saveManager.recoveryRequired()
+FAIL capacity capacity:65 memcmp(&before,&pet,sizeof(pet))==0&&store.values==disk
+FAIL lineProtocol lineProtocol:71 !g_slotImport.active
+80 application assertions, failures=6
+Traceback (most recent call last):
+  File "/home/omni/.codex/worktrees/original-save-repairs/esp32-artoria-tamagotchi/tests/host/run_application_repair.py", line 8, in <module>
+    print('+',shlex.join(command),flush=True);subprocess.run(command,cwd=root,check=True);subprocess.run([str(Path(temp)/'test')],cwd=root,check=True)
+                                                                                          ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.14/subprocess.py", line 578, in run
+    raise CalledProcessError(retcode, process.args,
+                             output=stdout, stderr=stderr)
+subprocess.CalledProcessError: Command '['/tmp/original-app-_cvkvmue/test']' returned non-zero exit status 1.

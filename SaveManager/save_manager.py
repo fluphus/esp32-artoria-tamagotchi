@@ -53,11 +53,19 @@ def _write_line(ser, line: str) -> None:
 
 
 def _read_line(ser) -> str:
-    b = ser.readline()
-    if not b:
+    # pyserial.readline may return an incomplete line when its read times out.
+    # Preserve fragments on this connection; never parse an ACK/success prefix alone.
+    pending = getattr(ser, "_save_line_buffer", b"")
+    if b"\n" not in pending:
+        pending += ser.readline()
+    if len(pending) > 4096:
+        raise RuntimeError("串口响应行过长")
+    if b"\n" not in pending:
+        ser._save_line_buffer = pending
         return ""
-    # 设备侧输出基本是 ASCII
-    return b.decode("utf-8", errors="replace").strip()
+    line, _, rest = pending.partition(b"\n")
+    ser._save_line_buffer = rest
+    return line.decode("utf-8", errors="replace").strip()
 
 
 def _wait_for_lines(
@@ -232,6 +240,13 @@ def cmd_export(port: str, baud: int, timeout: float, slot: int, out_path: Path, 
         except Exception as e:
             raise ValueError(f"解析导出 HEX 失败: {e}\nBEGIN={begin}\nEND={end_line}")
 
+        declared = re.search(r"bytes=(\d+)", begin)
+        ended = re.search(r"bytes=(\d+)", end_line)
+        begin_slot = re.search(r"slot=(\d+)", begin)
+        end_slot = re.search(r"slot=(\d+)", end_line)
+        if (not declared or not ended or int(declared.group(1)) != len(raw) or int(ended.group(1)) != len(raw)
+                or not begin_slot or not end_slot or int(begin_slot.group(1)) != slot or int(end_slot.group(1)) != slot):
+            raise ValueError("导出长度或结束标记不匹配；未写入备份文件")
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_bytes(raw)
         print(f"已导出 slot{slot} -> {out_path} ({len(raw)} bytes)")
@@ -280,6 +295,7 @@ def cmd_import(port: str, baud: int, timeout: float, slot: int, in_path: Path) -
             )
 
         # 16 bytes/行。每行发送后等待设备 RECV 回执，避免高速连发导致最后一包丢失。
+        indexed = "offset=1" in ready_line
         sent = 0
         chunks = _chunk_hex(raw, 16)
         for idx, hx in enumerate(chunks):
@@ -288,7 +304,7 @@ def cmd_import(port: str, baud: int, timeout: float, slot: int, in_path: Path) -
             expected_after = sent + chunk_bytes
             acked = False
             while retries < 3 and not acked:
-                _write_line(ser, f"SAVE_IMPORT_DATA {hx}")
+                _write_line(ser, f"SAVE_IMPORT_DATA @{sent} {hx}" if indexed else f"SAVE_IMPORT_DATA {hx}")
                 t0 = time.time()
                 while time.time() - t0 < timeout:
                     line = _read_line(ser)
@@ -298,7 +314,7 @@ def cmd_import(port: str, baud: int, timeout: float, slot: int, in_path: Path) -
                     if m_recv:
                         cur = int(m_recv.group(1))
                         # total = int(m_recv.group(2))  # 可用于调试
-                        if cur >= expected_after:
+                        if cur == expected_after:
                             sent = cur
                             acked = True
                             break
@@ -309,6 +325,8 @@ def cmd_import(port: str, baud: int, timeout: float, slot: int, in_path: Path) -
                         raise RuntimeError(f"设备端导入失败: {line}")
                 if not acked:
                     retries += 1
+                    if not indexed:
+                        break  # Unindexed append cannot safely retry a lost ACK.
                     if retries < 3:
                         print(f"[Import] 分包 {idx+1}/{len(chunks)} 未确认，重试 {retries}/2...")
             if not acked:

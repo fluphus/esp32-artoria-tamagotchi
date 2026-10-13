@@ -3,6 +3,7 @@
 // 支持多后端: Serial 占位 / TFT_eSPI (SSD1351 128x128 65K OLED)
 
 #include "display_renderer.h"
+#include "DisplayManager.h"
 #include "../config/food_table.h"
 #include "../config/game_config.h"
 #include "../pet/gallery.h"
@@ -321,7 +322,6 @@ void DisplayRenderer::drawAnimNode(const AnimNode& node, uint32_t elapsedMs, con
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1351.h>
 #include <stdarg.h>
-#include "DisplayManager.h"
 #include "asset_loader.h"
 #include "../presentation/animation_queue.h"
 #include "../presentation/idle_resolver.h"

@@ -45,14 +45,16 @@ void TimeManager::init() {
 }
 
 uint32_t TimeManager::now() {
-    uint32_t real_elapsed_sec = (millis() - _sim_start_millis) / 1000;
+    uint32_t real_elapsed_sec = uint32_t(millis() - _sim_start_millis) / 1000;
+    _sim_start_millis += real_elapsed_sec * 1000u;
 
 #if SIM_MINUTES_PER_REAL_SEC > 0
     // 自动快进模式
     real_elapsed_sec *= (SIM_MINUTES_PER_REAL_SEC * 60);
 #endif
 
-    return _simulated_epoch + real_elapsed_sec + _advance_offset;
+    _simulated_epoch += real_elapsed_sec;
+    return _simulated_epoch + _advance_offset;
 }
 
 TimeInfo TimeManager::getTimeInfo() {

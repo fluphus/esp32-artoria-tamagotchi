@@ -1,0 +1,77 @@
+Processing esp32-s3-devkitc-1 (platform: espressif32; board: esp32-s3-devkitc-1; framework: arduino)
+--------------------------------------------------------------------------------
+Verbose mode can be enabled via `-v, --verbose` option
+CONFIGURATION: https://docs.platformio.org/page/boards/espressif32/esp32-s3-devkitc-1.html
+PLATFORM: Espressif 32 (7.1.3) > Espressif ESP32-S3-DevKitC-1-N8 (8 MB QD, No PSRAM)
+HARDWARE: ESP32S3 240MHz, 320KB RAM, 8MB Flash
+DEBUG: Current (esp-builtin) On-board (esp-builtin) External (cmsis-dap, esp-bridge, esp-prog, iot-bus-jtag, jlink, minimodule, olimex-arm-usb-ocd, olimex-arm-usb-ocd-h, olimex-arm-usb-tiny-h, olimex-jtag-tiny, tumpa)
+PACKAGES: 
+ - framework-arduinoespressif32 @ 4.20017.260907+sha.dcc1105b 
+ - tool-esptoolpy @ 2.41100.260830 (4.11.0) 
+ - toolchain-riscv32-esp @ 8.4.0+2021r2-patch5 
+ - toolchain-xtensa-esp32s3 @ 8.4.0+2021r2-patch5
+LDF: Library Dependency Finder -> https://bit.ly/configure-pio-ldf
+LDF Modes: Finder ~ chain, Compatibility ~ soft
+Found 41 compatible libraries
+Scanning dependencies...
+Dependency Graph
+|-- Adafruit GFX Library @ 1.12.6
+|-- Adafruit SSD1351 library @ 1.3.3
+|-- Preferences @ 2.0.0
+|-- SPI @ 2.0.0
+Building in release mode
+Compiling .pio/build/esp32-s3-devkitc-1/src/main.cpp.o
+Linking .pio/build/esp32-s3-devkitc-1/firmware.elf
+Retrieving maximum program size .pio/build/esp32-s3-devkitc-1/firmware.elf
+Checking size .pio/build/esp32-s3-devkitc-1/firmware.elf
+Advanced Memory Usage is available via "PlatformIO Home > Project Inspect"
+RAM:   [=         ]   6.7% (used 21944 bytes from 327680 bytes)
+Flash: [======    ]  56.8% (used 3725677 bytes from 6553600 bytes)
+Building .pio/build/esp32-s3-devkitc-1/firmware.bin
+esptool.py v4.11.0
+Creating esp32s3 image...
+Merged 3 ELF sections
+Successfully created esp32s3 image.
+========================= [SUCCESS] Took 2.15 seconds =========================
+
+Processing original-serial (platform: espressif32; board: esp32-s3-devkitc-1; framework: arduino)
+--------------------------------------------------------------------------------
+Verbose mode can be enabled via `-v, --verbose` option
+CONFIGURATION: https://docs.platformio.org/page/boards/espressif32/esp32-s3-devkitc-1.html
+PLATFORM: Espressif 32 (7.1.3) > Espressif ESP32-S3-DevKitC-1-N8 (8 MB QD, No PSRAM)
+HARDWARE: ESP32S3 240MHz, 320KB RAM, 8MB Flash
+DEBUG: Current (esp-builtin) On-board (esp-builtin) External (cmsis-dap, esp-bridge, esp-prog, iot-bus-jtag, jlink, minimodule, olimex-arm-usb-ocd, olimex-arm-usb-ocd-h, olimex-arm-usb-tiny-h, olimex-jtag-tiny, tumpa)
+PACKAGES: 
+ - framework-arduinoespressif32 @ 4.20017.260907+sha.dcc1105b 
+ - tool-esptoolpy @ 2.41100.260830 (4.11.0) 
+ - toolchain-riscv32-esp @ 8.4.0+2021r2-patch5 
+ - toolchain-xtensa-esp32s3 @ 8.4.0+2021r2-patch5
+LDF: Library Dependency Finder -> https://bit.ly/configure-pio-ldf
+LDF Modes: Finder ~ chain, Compatibility ~ soft
+Found 41 compatible libraries
+Scanning dependencies...
+Dependency Graph
+|-- Adafruit GFX Library @ 1.12.6
+|-- Adafruit SSD1351 library @ 1.3.3
+|-- Preferences @ 2.0.0
+|-- SPI @ 2.0.0
+Building in release mode
+Compiling .pio/build/original-serial/src/main.cpp.o
+Linking .pio/build/original-serial/firmware.elf
+Retrieving maximum program size .pio/build/original-serial/firmware.elf
+Checking size .pio/build/original-serial/firmware.elf
+Advanced Memory Usage is available via "PlatformIO Home > Project Inspect"
+RAM:   [=         ]   6.6% (used 21712 bytes from 327680 bytes)
+Flash: [===       ]  25.4% (used 1664013 bytes from 6553600 bytes)
+Building .pio/build/original-serial/firmware.bin
+esptool.py v4.11.0
+Creating esp32s3 image...
+Merged 3 ELF sections
+Successfully created esp32s3 image.
+========================= [SUCCESS] Took 2.04 seconds =========================
+
+Environment         Status    Duration
+------------------  --------  ------------
+esp32-s3-devkitc-1  SUCCESS   00:00:02.155
+original-serial     SUCCESS   00:00:02.039
+========================= 2 succeeded in 00:00:04.194 =========================

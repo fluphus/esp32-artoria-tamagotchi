@@ -1,0 +1,64 @@
+{
+  "source_commit": "448dbe158595c1db9f1d2fc37caa15810c53de1c",
+  "source_header_sha256": "07143287dcb3d507c3d556b97fca3b87793f342f24bf61b0031c2748940e3305",
+  "compiler": "xtensa-esp32s3-elf-g++ (crosstool-NG esp-2021r2-patch5) 8.4.0",
+  "compile_flags": [
+    "-std=gnu++17",
+    "-c"
+  ],
+  "layout": {
+    "pet_size": 56,
+    "header_size": 16,
+    "device_size": 12,
+    "daily_size": 12,
+    "pet_offsets": {
+      "form": 0,
+      "base_form": 1,
+      "alignment": 2,
+      "stage": 3,
+      "health": 4,
+      "seriousness": 6,
+      "idle_minute_remainder": 8,
+      "idle_paused_until": 12,
+      "last_poke_effect_time": 16,
+      "rhongo_timer_start": 20,
+      "is_rhongomyniad": 24,
+      "white_fun_form": 25,
+      "white_fun_form_locked": 26,
+      "mapo_tofu_count": 27,
+      "is_black_rhongomyniad": 28,
+      "is_nobu": 29,
+      "is_oda_nobunaga": 30,
+      "birth_timestamp": 32,
+      "last_interact_time": 36,
+      "age_days": 40,
+      "daily_feed": 44
+    },
+    "header_offsets": {
+      "version": 0,
+      "data_size": 2,
+      "checksum": 4,
+      "sequence": 8,
+      "save_time": 12
+    },
+    "gallery_size": 12,
+    "device_offsets": {
+      "device_clock_epoch": 0,
+      "rounds": 4,
+      "is_visiting": 6,
+      "owner_frozen_slot": 7,
+      "visit_start_epoch": 8
+    }
+  },
+  "fixtures": {
+    "adult-white.pet.bin": "4b2f02403dfdee8c4e84723eb79eaee44ab2c3c86ffd769ec72036a20db5b487",
+    "adult-white.full.bin": "b7d1a1bc37551fabec9459c27e4949c1c1fd01b69dc974a1cae215dba959ff1e",
+    "nobu.pet.bin": "031187dee18a0cedb295d6a367b6ed871f43c755c428e571d0b593a6e7771dd4",
+    "black.pet.bin": "b45b1fa86a7c857db653fb91d16e62cc2bbee525cf79c2c82ac63e677c954b36",
+    "rhongo.pet.bin": "9c35e2f6d3560e4e8c389f69b54f5fab61f1727669078d3cd22c1827979cc5f3",
+    "gallery.bin": "67de10c46e7819d40f9d4b2312288958eaf54c32c16785cea2c62381feb59202",
+    "device.bin": "7e0dca87c83cd0eb1c45fa81de01d934eb4a679f119f50a72dd9142b36ade313",
+    "device_visit.bin": "33732ca23a0342b58cb750240893200d2f5e6be5bab4d9dd9d83a986af5bff57"
+  },
+  "origin": "Static aggregate objects compiled with original firmware header and target Xtensa toolchain; checksum filled over target pet bytes using original algorithm. Gallery and DeviceState objects also use original headers and target compiler. No hardware dump; runtime padding and real NVS failures not sampled."
+}
